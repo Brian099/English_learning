@@ -8,7 +8,7 @@
 ```
 .
 ├─ README.md
-├─ .github/workflows/docker.yml  推送 main 自动构建镜像到 GHCR
+├─ .github/workflows/docker.yml  推送 main 自动构建镜像到 Docker Hub
 ├─ docs/                     设计与部署文档
 │  ├─ DESIGN.md              设计稿 v0.2
 │  ├─ deploy-fnos.md         **飞牛 fnOS 部署步骤**

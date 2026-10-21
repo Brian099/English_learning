@@ -1,7 +1,12 @@
 name: build-image
 
-# 推送到 main 就自动构建镜像并推到 GitHub 容器仓库（GHCR）
+# 推送到 main 自动构建镜像并推到 Docker Hub（brian9909/moer）
 # NAS 上只要 docker compose pull 就能更新，不需要在 NAS 上装构建环境
+#
+# 需要在仓库里配置两个 Secrets（Settings → Secrets and variables → Actions）：
+#   DOCKERHUB_USERNAME = brian9909
+#   DOCKERHUB_TOKEN    = Docker Hub 的 Access Token（不是登录密码）
+# 没配置时工作流会自动跳过构建，不会报红。
 
 on:
   push:
@@ -14,34 +19,44 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      packages: write
 
     steps:
       - name: 检出代码
         uses: actions/checkout@v4
 
+      - name: 检查凭据是否已配置
+        id: check
+        run: |
+          if [ -z "${{ secrets.DOCKERHUB_TOKEN }}" ]; then
+            echo "::warning::缺少 DOCKERHUB_TOKEN，跳过构建。请在 Settings → Secrets 里配置。"
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: 准备 Buildx
+        if: steps.check.outputs.skip != 'true'
         uses: docker/setup-buildx-action@v3
 
-      - name: 登录 GHCR
+      - name: 登录 Docker Hub
+        if: steps.check.outputs.skip != 'true'
         uses: docker/login-action@v3
         with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
 
       - name: 生成标签
+        if: steps.check.outputs.skip != 'true'
         id: meta
         uses: docker/metadata-action@v5
         with:
-          images: ghcr.io/brian099/english_learning
+          images: brian9909/moer
           tags: |
             type=raw,value=latest
             type=sha,format=short
 
       - name: 构建并推送
+        if: steps.check.outputs.skip != 'true'
         uses: docker/build-push-action@v6
         with:
           context: ./server

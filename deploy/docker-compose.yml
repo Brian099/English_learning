@@ -5,9 +5,9 @@ name: kids-english-listening
 
 services:
   api:
-    # 用 GitHub 自动构建好的镜像（推荐，NAS 上无需构建环境）
+    # 用 GitHub Actions 自动构建好的镜像（Docker Hub，公开可拉）
     # 想自己构建就加 --build，会以同名 tag 覆盖本地镜像
-    image: ghcr.io/brian099/english_learning:latest
+    image: brian9909/moer:latest
     build:
       context: ../server
     environment:

@@ -3,7 +3,8 @@
 整套服务只有两个容器：`api`（FastAPI + 前端）和 `web`（nginx）。
 数据库默认用 SQLite（一个文件），不需要额外的数据库容器。
 
-镜像由 GitHub Actions 自动构建，NAS 上**不需要装 Python、不需要编译**，只要能跑 Docker。
+镜像由 GitHub Actions 自动构建并推送到 Docker Hub：**`brian9909/moer:latest`**。
+NAS 上**不需要装 Python、不需要编译**，只要能跑 Docker。
 
 ---
 
@@ -74,10 +75,10 @@ docker compose ps
 
 看到 `api` 和 `web` 两个容器都是 `Up` 即可。
 
-镜像地址是 `ghcr.io/brian099/english_learning:latest`，**公开可拉，不需要登录**。想单独验证一下：
+镜像地址是 `brian9909/moer:latest`，**公开可拉，不需要登录**。想单独验证一下：
 
 ```bash
-docker pull ghcr.io/brian099/english_learning:latest
+docker pull brian9909/moer:latest
 ```
 
 ### 4. 验证
@@ -218,7 +219,27 @@ docker compose up -d
 
 ---
 
-## 八、不用 GitHub 镜像的替代方案
+## 八、镜像构建（维护者）
+
+镜像由 `.github/workflows/docker.yml` 在推送 `main` 时自动构建并推送到 Docker Hub。
+
+**首次需要配置两个仓库 Secrets**（Settings → Secrets and variables → Actions → New repository secret）：
+
+| 名称 | 值 |
+|---|---|
+| `DOCKERHUB_USERNAME` | `brian9909` |
+| `DOCKERHUB_TOKEN` | Docker Hub 的 **Access Token**（Account Settings → Security → New Access Token，权限选 Read & Write） |
+
+> 不要用 Docker Hub 的登录密码，用 Access Token。
+> 没配置时工作流会自动跳过构建（黄色警告，不报红）。
+
+配置好后手动触发一次：Actions → build-image → Run workflow。
+
+每次推送到 `main`（且 `server/` 有变化）会自动重新构建，标签为 `latest` 和 `sha-xxxxxxx`。
+
+---
+
+## 九、不用 Docker Hub 镜像的替代方案
 
 如果不想依赖 GHCR，也可以直接在 NAS 上构建：
 
