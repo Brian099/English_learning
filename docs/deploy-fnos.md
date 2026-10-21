@@ -62,7 +62,10 @@ HTTP_PORT=18080
 入库流水线相关的（一般不用动）：
 
 ```ini
-AUTO_INGEST=1                          # 扫描后自动转音频 + 提取对白
+AUTO_INGEST=1                          # 扫描后自动跑流水线
+NORMALIZE_AUDIO=1                      # 统一音量到 -16 LUFS
+NORMALIZE_VIDEO=0                      # 看模式也归一化（额外占视频空间）
+TARGET_LUFS=-16                        # 目标响度
 WHISPER_MODEL=small.en                 # 转写模型，N100 上约 3-4 倍实时
 WHISPER_THREADS=3                      # 留一核给 NAS 其他服务
 HF_ENDPOINT=https://hf-mirror.com      # 模型下载镜像，国内必填

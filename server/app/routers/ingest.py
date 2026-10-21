@@ -181,6 +181,7 @@ async def video_detail(
         "level_score": video.level_score,
         "unique_words": video.unique_words,
         "oov_ratio": video.oov_ratio,
+        "lufs": video.lufs,
         "width": video.width,
         "height": video.height,
         "media_url": f"/api/media/{video.id}",

@@ -28,6 +28,13 @@ class Settings(BaseSettings):
     # ---- 入库流水线 ----
     # 扫描到新视频后自动转音频 + 提取对白（否则只入库元数据）
     auto_ingest: bool = True
+    # 音量统一（EBU R128）：不同来源的素材响度差十几 dB，统一后孩子不用来回调音量
+    normalize_audio: bool = True
+    # 看模式也走统一音量（会把归一化后的视频写进 cache，额外占空间）
+    normalize_video: bool = False
+    target_lufs: float = -16.0
+    target_tp: float = -1.5
+    target_lra: float = 11.0
     # 转写模型：small.en 在 N100 上约 3-4 倍实时；medium.en 更准但慢 3 倍
     whisper_model: str = "small.en"
     whisper_compute: str = "int8"

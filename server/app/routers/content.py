@@ -276,12 +276,17 @@ async def media(
         raise HTTPException(status.HTTP_404_NOT_FOUND, "视频不存在")
 
     # 音轨查找顺序：预处理生成的（media 目录） → 服务端自动提取的（cache 目录）
-    # → 都没有就退回视频文件本身（浏览器能解出音轨，只是体积大 36 倍）
+    # → 都没有就退回视频文件本身（浏览器能解出音轨，只是体积大 35 倍）
     cache_audio = Path(settings.cache_root) / "audio" / f"{video.id}.m4a"
+    cache_video = Path(settings.cache_root) / "video" / f"{video.id}.mp4"
     rel = video.audio_rel if track == "audio" and video.audio_rel else None
 
+    # 看模式：如果入库时做过音量统一，优先用 cache 里那份
+    if track == "video" and settings.normalize_video and cache_video.is_file():
+        return _direct_media(cache_video, request)
+
     if track == "audio" and not rel and cache_audio.is_file():
-        # cache 里的音轨不在 nginx 的 /_media/ 映射下，直接由 API 按 Range 发
+        # cache 里的文件不在 nginx 的 /_media/ 映射下，直接由 API 按 Range 发
         return _direct_media(cache_audio, request)
 
     rel = rel or video.rel_path

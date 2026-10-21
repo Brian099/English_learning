@@ -24,6 +24,11 @@ services:
       SERVE_MEDIA: ${SERVE_MEDIA:-accel}
       # 扫描到新视频后自动转音频 + 提取对白
       AUTO_INGEST: ${AUTO_INGEST:-1}
+      # 音量统一（EBU R128）：不同来源素材响度能差 14 dB
+      NORMALIZE_AUDIO: ${NORMALIZE_AUDIO:-1}
+      # 看模式也归一化（额外占一份视频空间，约等于原文件大小）
+      NORMALIZE_VIDEO: ${NORMALIZE_VIDEO:-0}
+      TARGET_LUFS: ${TARGET_LUFS:--16}
       WHISPER_MODEL: ${WHISPER_MODEL:-small.en}
       WHISPER_THREADS: ${WHISPER_THREADS:-3}
       MODEL_DIR: /models
