@@ -12,6 +12,7 @@
 ├─ docs/                     设计与部署文档
 │  ├─ DESIGN.md              设计稿 v0.2
 │  ├─ deploy-fnos.md         **飞牛 fnOS 部署步骤**
+│  ├─ adding-videos.md       **新增视频怎么操作（增量）**
 │  ├─ sample-analysis.md     样本技术分析（编码/响度/时长/命名）
 │  ├─ transcription-report.md 转写结果与参数调优
 │  ├─ model-comparison.md    small.en vs medium.en 选型依据
@@ -32,8 +33,9 @@
 │     ├─ web/                家长端 + 学生端 + 自检页（原生 HTML/JS/CSS，无构建）
 │     └─ routers/            auth / content / ingest / play / report / plan / student
 └─ tools/
-   ├─ prep.py                预处理：过滤/改名/响度/抽音轨
+   ├─ prep.py                预处理：过滤/改名/响度/抽音轨（增量安全）
    ├─ transcribe.py          ASR 转写（faster-whisper）
+   ├─ add_videos.py          **新增视频一条龙：预处理 → 转写 → 导入**
    ├─ import_content.py      导入清单与转写（本地 → 服务端）
    ├─ smoke_test.py          接口冒烟测试（37 项）
    ├─ ui_test.mjs            家长端 UI 测试（34 项，jsdom）

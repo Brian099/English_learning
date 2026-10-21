@@ -15,7 +15,9 @@ from __future__ import annotations
 
 import argparse
 import csv
+import hashlib
 import json
+import os
 import re
 import shutil
 import subprocess
@@ -198,6 +200,7 @@ class Record:
     truepeak_after: float | None = None
     silence_pct: float = 0.0
     size_mb: float = 0.0
+    file_hash: str = ""
     video_out: str = ""
     audio_out: str = ""
     asr_wav: str = ""
@@ -209,15 +212,27 @@ class Record:
         return f"{safe_name(self.series)}_S{self.season:02d}E{self.episode:02d}_{safe_name(self.title)}"
 
 
-def load_numbering(path: Path) -> dict[str, int]:
-    """沿用上一次的集号，保证重复运行不重新编号。"""
+def quick_hash(path: Path, size: int) -> str:
+    """首尾 64KB + 大小，够用于去重，不做全文件哈希。"""
+    digest = hashlib.sha256()
+    digest.update(str(size).encode())
+    with path.open("rb") as handle:
+        digest.update(handle.read(65536))
+        if size > 131072:
+            handle.seek(-65536, os.SEEK_END)
+            digest.update(handle.read(65536))
+    return digest.hexdigest()[:32]
+
+
+def load_previous(path: Path) -> list[dict]:
+    """读上一次的清单。增量运行要靠它保留旧记录、续上集号、按内容去重。"""
     if not path.exists():
-        return {}
+        return []
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
-        return {}
-    return {row["original_name"]: row["episode"] for row in data.get("records", [])}
+        return []
+    return list(data.get("records", []))
 
 
 def process(record: Record, src: Path, out: Path, args) -> None:
@@ -308,6 +323,8 @@ def main() -> int:
     parser.add_argument("--target-lra", type=float, default=11.0)
     parser.add_argument("--limit", type=int, default=0, help="只处理前 N 个（调试用）")
     parser.add_argument("--dry-run", action="store_true", help="只出清单，不转码")
+    parser.add_argument("--force", action="store_true",
+                        help="忽略清单里已处理的记录，强制重新处理（默认增量）")
     args = parser.parse_args()
 
     src_root = Path(args.src)
@@ -322,16 +339,49 @@ def main() -> int:
         key=lambda p: p.name,
     )
 
-    numbering = load_numbering(out_root / "manifest.json")
-    counters: dict[str, int] = {}
+    previous = load_previous(out_root / "manifest.json")
+    numbering = {row["original_name"]: row["episode"] for row in previous}
+    # 集号接着已有最大值往后编，否则新增集会和旧的撞号
+    series_max: dict[str, int] = {}
+    for row in previous:
+        series_max[row["series"]] = max(series_max.get(row["series"], 0), row.get("episode", 0))
+
+    by_name = {row["original_name"]: row for row in previous}
+    by_hash = {row["file_hash"]: row for row in previous if row.get("file_hash")}
+
+    counters: dict[str, int] = dict(series_max)
     records: list[Record] = []
     skipped: list[tuple[str, str]] = []
+    reused: list[dict] = []          # 上次已处理、这次原样保留的记录
+    excluded_count = 0
 
     for path in files:
         series, rest = split_series(path.stem)
         if any(word in series for word in args.exclude):
             skipped.append((path.name, f"系列命中排除词: {series}"))
+            excluded_count += 1
             continue
+
+        # 增量判断：同名且内容没变 → 直接复用，不重新转码
+        size = path.stat().st_size
+        digest = quick_hash(path, size)
+        if not args.force:
+            existing = by_name.get(path.name)
+            if existing and existing.get("status") == "ok":
+                same_hash = existing.get("file_hash") == digest
+                # 老版本清单没有 file_hash，用文件大小兜底（差 0.15MB 内算同一个）
+                same_size = (not existing.get("file_hash")
+                             and abs(float(existing.get("size_mb") or 0) - size / 1e6) < 0.15)
+                if same_hash or same_size:
+                    existing["file_hash"] = digest      # 顺手补上，下次判断就精确了
+                    reused.append(existing)
+                    skipped.append((path.name, "已处理过，跳过"))
+                    continue
+            duplicate = by_hash.get(digest)
+            if duplicate and duplicate.get("original_name") != path.name:
+                skipped.append((path.name, f"内容重复（同 {duplicate['original_name'][:20]}…）"))
+                continue
+
         counters[series] = counters.get(series, 0) + 1
         episode = numbering.get(path.name, counters[series])
         records.append(
@@ -341,6 +391,7 @@ def main() -> int:
                 episode=episode,
                 title=clean_title(rest),
                 original_name=path.name,
+                file_hash=digest,
                 note=str(path.parent.relative_to(src_root)) if path.parent != src_root else "",
             )
         )
@@ -348,7 +399,9 @@ def main() -> int:
     if args.limit:
         records = records[: args.limit]
 
-    print(f"发现 {len(files)} 个视频，排除 {len(skipped)} 个，待处理 {len(records)} 个")
+    already = len(skipped) - excluded_count
+    print(f"发现 {len(files)} 个视频：排除 {excluded_count} 个、已处理跳过 {already} 个、"
+          f"待处理 {len(records)} 个")
     for name, reason in skipped:
         print(f"  [跳过] {name[:40]}…  ({reason})")
 
@@ -370,23 +423,29 @@ def main() -> int:
         elif record.status == "failed":
             print(f"    失败: {record.note}")
 
-    # 清单
+    # 清单：本次处理的 + 本次复用的 + 上次有但这次目录里没出现的，全部保留
+    # （增量运行时 --src 通常只指向新增文件所在目录，旧记录必须原样带过去）
+    current_names = {p.name for p in files}
+    carried = [row for row in previous if row["original_name"] not in current_names]
+    merged = [asdict(r) for r in records] + reused + carried
+    merged.sort(key=lambda row: (row["series"], row.get("season", 1), row.get("episode", 0)))
+
     payload = {
         "source": str(src_root),
         "target_lufs": args.target_lufs,
         "skipped": [{"file": name, "reason": reason} for name, reason in skipped],
-        "records": [asdict(r) for r in records],
+        "records": merged,
     }
     (out_root / "manifest.json").write_text(
         json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8"
     )
 
-    columns = list(asdict(records[0]).keys()) if records else []
+    columns = list(merged[0].keys()) if merged else []
     with (out_root / "manifest.csv").open("w", encoding="utf-8-sig", newline="") as handle:
         writer = csv.DictWriter(handle, fieldnames=columns)
         writer.writeheader()
-        for record in records:
-            writer.writerow(asdict(record))
+        for row in merged:
+            writer.writerow(row)
 
     ok = sum(1 for r in records if r.status == "ok")
     failed = [r for r in records if r.status == "failed"]

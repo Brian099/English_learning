@@ -243,6 +243,8 @@ def main() -> int:
                         help="VAD 灵敏度，0 = 关闭（默认）。本批素材音乐连续铺底，"
                              "VAD 会把对白整段切掉：实测同一集 0.5→29 词、0.25→29 词、关闭→78 词")
     parser.add_argument("--limit", type=int, default=0)
+    parser.add_argument("--skip-existing", action="store_true",
+                        help="跳过已经转过（输出 JSON 已存在）的文件，增量用")
     args = parser.parse_args()
 
     src = Path(args.src)
@@ -253,6 +255,10 @@ def main() -> int:
     out.mkdir(parents=True, exist_ok=True)
 
     files = sorted(p for p in src.rglob("*") if p.suffix.lower() in AUDIO_EXT)
+    if args.skip_existing:
+        before = len(files)
+        files = [p for p in files if not (out / f"{p.stem}.json").exists()]
+        print(f"跳过已转写的 {before - len(files)} 个，剩余 {len(files)} 个")
     if args.limit:
         files = files[: args.limit]
     if not files:
