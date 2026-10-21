@@ -487,8 +487,13 @@ async function renderSettings() {
         <h2>内容维护</h2>
         <div class="row">
           <button id="do-scan" class="ghost">扫描视频目录</button>
-          <span class="muted">导入 prepared/manifest.json 请用命令行</span>
+          <button id="do-audio" class="ghost">生成音轨</button>
+          <span class="muted" id="maintenance-status"></span>
         </div>
+        <p class="muted" style="margin:10px 0 0">
+          直接把视频拷进媒体目录后，点「扫描视频目录」入库；
+          再点「生成音轨」给每集抽一条轻量音轨（体积约为视频的 1/36，听模式用）。
+        </p>
       </div>
       <div class="card">
         <h2>学生端</h2>
@@ -545,6 +550,8 @@ async function renderSettings() {
         toast(`新增 ${result.added || 0}，更新 ${result.updated || 0}`);
       } catch (err) { toast(err.message); }
     });
+
+    document.getElementById('do-audio').addEventListener('click', startAudioExtraction);
   } catch (err) {
     root.innerHTML = `<div class="card"><div class="empty">${esc(err.message)}</div></div>`;
   }
@@ -553,6 +560,39 @@ async function renderSettings() {
 function showModal(html) {
   document.getElementById('modal-body').innerHTML = html;
   document.getElementById('modal').classList.remove('hidden');
+}
+
+/* 生成音轨：后台任务 + 轮询进度 */
+async function startAudioExtraction() {
+  const statusEl = document.getElementById('maintenance-status');
+  try {
+    const started = await api('/api/maintenance/extract-audio', { method: 'POST' });
+    if (!started.started) {
+      toast(started.reason || '没有需要处理的视频');
+      return;
+    }
+    toast(`开始生成音轨，共 ${started.pending} 集`);
+    if (statusEl) statusEl.textContent = `生成中 0/${started.pending}`;
+
+    const timer = setInterval(async () => {
+      try {
+        const s = await api('/api/maintenance/status');
+        if (statusEl) {
+          statusEl.textContent = s.running
+            ? `生成中 ${s.done}/${s.total}${s.failed ? `（失败 ${s.failed}）` : ''}`
+            : `已完成 ${s.done}/${s.total}${s.failed ? `，失败 ${s.failed}` : ''}`;
+        }
+        if (!s.running) {
+          clearInterval(timer);
+          toast(s.failed ? `完成，${s.failed} 集失败` : '音轨生成完成');
+        }
+      } catch (err) {
+        clearInterval(timer);
+      }
+    }, 2000);
+  } catch (err) {
+    toast(err.message);
+  }
 }
 
 /* ------------------------------------------------------------- 启动 */

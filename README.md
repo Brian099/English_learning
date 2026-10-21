@@ -234,7 +234,9 @@ curl -s "$BASE/api/report/1/today" -H "Authorization: Bearer $TOKEN"
 | POST | `/api/admin/login` | 密码 | 家长登录，返回 30 天令牌 |
 | GET/POST | `/api/students` | 家长 | 学生列表 / 新建 |
 | PATCH | `/api/students/{id}` | 家长 | 改名 / 改每日目标 |
-| POST | `/api/scan` | 家长 | 增量扫描视频目录 |
+| POST | `/api/scan` | 家长 | 增量扫描视频目录（直接拷文件后用） |
+| POST | `/api/maintenance/extract-audio` | 家长 | **给没有音轨的视频批量生成音轨**（后台） |
+| GET | `/api/maintenance/status` | 家长 | 音轨生成进度 |
 | POST | `/api/import/manifest` | 家长 | **导入 `tools/prep.py` 的 manifest.json** |
 | GET | `/api/series` | 读权限 | 系列列表 |
 | GET | `/api/videos` | 读权限 | 视频列表（系列/难度/时长/关键词筛选） |
@@ -379,7 +381,7 @@ prepared/transcript/
 | **概览** | 每个学生一张卡：今日分钟 / 目标进度条、连续天数、本周 7 天柱状图 |
 | **内容库** | 按系列和难度筛选，显示时长、语音占比、WPM、难度徽章；点开看转写全文 |
 | **计划** | **自动排片**一键生成当天内容，也可手动勾选覆盖；显示来源（自动/手动） |
-| **设置** | 加学生、生成设备配对码、撤销设备、扫描目录、学生端入口 |
+| **设置** | 加学生、生成设备配对码、撤销设备、扫描目录、**批量生成音轨**、学生端入口 |
 
 ### 学生端
 

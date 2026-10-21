@@ -7,7 +7,7 @@ from fastapi.staticfiles import StaticFiles
 
 from .config import settings
 from .db import init_db
-from .routers import auth, content, ingest, plan, play, report, student
+from .routers import auth, content, ingest, maintenance, plan, play, report, student
 
 
 @asynccontextmanager
@@ -38,7 +38,7 @@ async def health() -> dict:
     }
 
 
-for module in (auth, content, ingest, play, report, plan, student):
+for module in (auth, content, ingest, play, report, plan, student, maintenance):
     app.include_router(module.router)
 
 # 静态前端：必须最后挂载，否则会吃掉 /api 路由

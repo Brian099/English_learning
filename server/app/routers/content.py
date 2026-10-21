@@ -19,6 +19,13 @@ from ..security import read_auth, require_parent
 router = APIRouter(prefix="/api", tags=["content"])
 
 
+def _has_audio(video: Video) -> bool:
+    """有没有独立音轨：预处理生成的（audio_rel）或服务端提取的（cache）。"""
+    if video.audio_rel:
+        return True
+    return (Path(settings.cache_root) / "audio" / f"{video.id}.m4a").is_file()
+
+
 class StudentBody(BaseModel):
     name: str
     daily_target_min: int = 20
@@ -142,7 +149,7 @@ async def list_videos(
                 "level_score": v.level_score,
                 "unique_words": v.unique_words,
                 "oov_ratio": v.oov_ratio,
-                "has_audio": bool(v.audio_rel),
+                "has_audio": _has_audio(v),
                 "media_url": f"/api/media/{v.id}",
                 "audio_url": f"/api/media/{v.id}?track=audio",
             }
@@ -259,7 +266,16 @@ async def media(
     if video is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "视频不存在")
 
-    rel = video.audio_rel if track == "audio" and video.audio_rel else video.rel_path
+    # 音轨查找顺序：预处理生成的（media 目录） → 服务端自动提取的（cache 目录）
+    # → 都没有就退回视频文件本身（浏览器能解出音轨，只是体积大 36 倍）
+    cache_audio = Path(settings.cache_root) / "audio" / f"{video.id}.m4a"
+    rel = video.audio_rel if track == "audio" and video.audio_rel else None
+
+    if track == "audio" and not rel and cache_audio.is_file():
+        # cache 里的音轨不在 nginx 的 /_media/ 映射下，直接由 API 按 Range 发
+        return _direct_media(cache_audio, request)
+
+    rel = rel or video.rel_path
     if not rel:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "该视频没有可用音轨")
 

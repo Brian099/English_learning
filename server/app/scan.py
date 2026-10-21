@@ -1,37 +1,43 @@
 import asyncio
 import hashlib
 import os
+import subprocess
 from pathlib import Path
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from .config import settings
+from .media_tools import ffprobe
 from .models import Series, Video
 
 VIDEO_EXT = {".mp4", ".mkv", ".m4v", ".mov", ".webm", ".avi", ".flv", ".ts", ".wmv"}
 
 
 async def _duration_ms(path: Path) -> int | None:
-    """用 ffprobe 取时长；失败返回 None，不阻塞扫描。"""
-    try:
-        proc = await asyncio.create_subprocess_exec(
-            "ffprobe",
-            "-v",
-            "error",
-            "-show_entries",
-            "format=duration",
-            "-of",
-            "default=nw=1:nk=1",
-            str(path),
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.DEVNULL,
-        )
-        out, _ = await proc.communicate()
-        text = out.decode().strip()
-        return int(float(text) * 1000) if text else None
-    except Exception:
+    """用 ffprobe 取时长；失败返回 None，不阻塞扫描。
+
+    注意：这里用 subprocess.run + to_thread，不用 asyncio.create_subprocess_exec。
+    后者在 Windows 上走命名管道，受限环境（沙箱/某些容器）会直接 PermissionError，
+    而且异常被吞掉时表现为"时长永远是 0"，很难查。
+    """
+    executable = ffprobe()
+    if executable is None:
         return None
+
+    def _run() -> int | None:
+        try:
+            result = subprocess.run(
+                [executable, "-v", "error", "-show_entries", "format=duration",
+                 "-of", "default=nw=1:nk=1", str(path)],
+                capture_output=True, text=True, timeout=30,
+            )
+            text = (result.stdout or "").strip()
+            return int(float(text) * 1000) if text else None
+        except Exception:
+            return None
+
+    return await asyncio.to_thread(_run)
 
 
 def _quick_hash(path: Path, size: int) -> str:
@@ -66,7 +72,10 @@ async def scan_media(db: AsyncSession) -> dict:
             existing = (
                 await db.execute(select(Video).where(Video.rel_path == rel))
             ).scalar_one_or_none()
-            if existing and existing.size_bytes == stat.st_size and existing.mtime == int(stat.st_mtime):
+            # 时长为 0 说明上次探测失败过，即使文件没变也要重探一次
+            if (existing and existing.size_bytes == stat.st_size
+                    and existing.mtime == int(stat.st_mtime)
+                    and existing.duration_ms):
                 skipped += 1
                 continue
 
@@ -79,10 +88,12 @@ async def scan_media(db: AsyncSession) -> dict:
                 db.add(series)
                 await db.flush()
 
+            duration = await _duration_ms(path)
             values = {
                 "title": Path(name).stem,
                 "series_id": series.id,
-                "duration_ms": await _duration_ms(path),
+                # ffprobe 失败时不要写 None（列是非空的）；更新已有记录时保留旧时长
+                "duration_ms": duration if duration is not None else (existing.duration_ms if existing else 0),
                 "size_bytes": stat.st_size,
                 "mtime": int(stat.st_mtime),
                 "file_hash": _quick_hash(path, stat.st_size),
