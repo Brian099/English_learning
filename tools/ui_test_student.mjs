@@ -231,6 +231,22 @@ async function main() {
   check('记录页渲染 7 天', Boolean(historyRows), `${historyRows ? historyRows.length : 0} 行`);
   check('记录页显示合计', /近 7 天共/.test(textOf(doc.getElementById('history-view'))));
 
+  console.log('\n10. 过期令牌自愈');
+  const dom2 = new JSDOM(html, { url: BASE + '/student.html', runScripts: 'outside-only', pretendToBeVisual: true });
+  const win2 = dom2.window;
+  win2.fetch = (input, init) => fetch(new URL(input, BASE), init);
+  win2.confirm = () => true;
+  // 模拟"换了数据库/撤销过设备"之后的陈旧令牌
+  win2.localStorage.setItem('student_token', 'stale-token-that-no-longer-exists');
+  win2.eval(appJs);
+  const backToPair = await waitFor(() => !win2.document.getElementById('screen-pair').classList.contains('hidden'));
+  check('陈旧令牌自动回到配对页', Boolean(backToPair));
+  check('给出"配对已失效"提示',
+    textOf(win2.document.getElementById('pair-error')).includes('失效'),
+    textOf(win2.document.getElementById('pair-error')));
+  check('陈旧令牌已从本地清除', !win2.localStorage.getItem('student_token'));
+  dom2.window.close();
+
   console.log(`\n${'='.repeat(46)}\n通过 ${pass}，失败 ${fail}`);
   dom.window.close();
   process.exit(fail === 0 ? 0 : 1);

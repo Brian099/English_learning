@@ -67,10 +67,22 @@ async function api(path, options = {}) {
   return data;
 }
 
-function forgetToken() {
+function forgetToken(hint) {
   state.token = '';
   localStorage.removeItem('student_token');
+  const errorEl = document.getElementById('pair-error');
+  if (errorEl) errorEl.textContent = hint || '';
   showScreen('pair');
+}
+
+/** 令牌是否还有效。媒体报错时用它区分"地址问题"和"配对过期"。 */
+async function tokenValid() {
+  try {
+    await api('/api/me');
+    return true;
+  } catch (err) {
+    return false;
+  }
 }
 
 function showScreen(name) {
@@ -149,7 +161,12 @@ async function loadHome() {
     showScreen('home');
     await flushQueue();
   } catch (err) {
-    if (!state.token) return;
+    if (!state.token) {
+      // api() 遇到 401 已经清掉令牌并切到配对页，这里补一句原因
+      const hint = document.getElementById('pair-error');
+      if (hint && !hint.textContent) hint.textContent = '配对已失效，请让家长重新生成配对码';
+      return;
+    }
     toast(err.message);
   }
 }
@@ -328,6 +345,7 @@ function openPlayer(index) {
   document.getElementById('player-title').textContent = item.title;
   document.getElementById('player-meta').textContent =
     `${fmtTime((item.duration_ms || 0) / 1000)}${item.level ? ' · ' + item.level : ''}`;
+  document.getElementById('repair-btn').classList.add('hidden');
 
   audio.pause();
   video.pause();
@@ -561,7 +579,7 @@ window.addEventListener('pagehide', () => { finalizeCurrent(false).catch(() => {
 
 /* 媒体加载失败时把原因显示出来，不要静默失败 */
 [audio, video].forEach((el) => {
-  el.addEventListener('error', () => {
+  el.addEventListener('error', async () => {
     if (el !== activeEl()) return;
     const code = el.error?.code;
     const reason = {
@@ -574,13 +592,31 @@ window.addEventListener('pagehide', () => { finalizeCurrent(false).catch(() => {
     const shortSrc = src.replace(/token=[^&]+/, 'token=***').slice(0, 120);
     document.getElementById('player-tip').textContent =
       `播放失败：${reason}（${code}）· ${shortSrc}`;
-    toast(`播放失败：${reason}`);
     console.warn('[media error]', code, src);
+
+    // 最常见的原因是设备令牌过期（换了数据库、撤销过设备、重新部署过）
+    // 先探测令牌，能区分"地址/格式问题"和"该重新配对了"
+    if (code === 4) {
+      const stillValid = await tokenValid();
+      if (!stillValid) {
+        document.getElementById('repair-btn').classList.remove('hidden');
+        document.getElementById('player-tip').textContent = '配对已失效，请让家长重新生成配对码';
+        toast('配对已失效');
+      } else {
+        toast(`播放失败：${reason}`);
+      }
+    } else {
+      toast(`播放失败：${reason}`);
+    }
   });
   el.addEventListener('stalled', () => {
     if (el !== activeEl()) return;
     document.getElementById('player-tip').textContent = '网络有点慢，正在缓冲…';
   });
+});
+
+document.getElementById('repair-btn').addEventListener('click', () => {
+  forgetToken('请让家长在「设置」里生成新的配对码');
 });
 
 /* ------------------------------------------------------------ 启动 */
