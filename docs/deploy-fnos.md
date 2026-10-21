@@ -74,6 +74,12 @@ docker compose ps
 
 看到 `api` 和 `web` 两个容器都是 `Up` 即可。
 
+镜像地址是 `ghcr.io/brian099/english_learning:latest`，**公开可拉，不需要登录**。想单独验证一下：
+
+```bash
+docker pull ghcr.io/brian099/english_learning:latest
+```
+
 ### 4. 验证
 
 ```bash
