@@ -22,6 +22,12 @@ services:
       DATABASE_URL: ${DATABASE_URL:-sqlite+aiosqlite:////data/kids.db}
       # 生产用 nginx 直出（API 不搬运字节）；本地开发没 nginx 时设 direct
       SERVE_MEDIA: ${SERVE_MEDIA:-accel}
+      # 扫描到新视频后自动转音频 + 提取对白
+      AUTO_INGEST: ${AUTO_INGEST:-1}
+      WHISPER_MODEL: ${WHISPER_MODEL:-small.en}
+      WHISPER_THREADS: ${WHISPER_THREADS:-3}
+      MODEL_DIR: /models
+      HF_ENDPOINT: ${HF_ENDPOINT:-https://hf-mirror.com}
       APP_SECRET: ${APP_SECRET:?请在 .env 里设置 APP_SECRET}
       PARENT_PASSWORD: ${PARENT_PASSWORD:?请在 .env 里设置 PARENT_PASSWORD}
       TZ: ${TZ:-Asia/Shanghai}
@@ -31,6 +37,8 @@ services:
       - ./data/cache:/cache
       # 数据库文件所在目录（必须是 NAS 本地盘，不要放 SMB/NFS 共享）
       - ./data/sqlite:/data
+      # 转写模型缓存（首次运行会下载约 480MB，挂卷避免重建容器后重下）
+      - ./data/models:/models
     restart: unless-stopped
 
   web:

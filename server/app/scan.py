@@ -59,6 +59,7 @@ async def scan_media(db: AsyncSession) -> dict:
         return {"error": f"media root not found: {root}", "added": 0, "updated": 0, "skipped": 0}
 
     added = updated = skipped = 0
+    touched: list[Video] = []
 
     for dirpath, _dirnames, filenames in os.walk(root):
         for name in filenames:
@@ -102,9 +103,17 @@ async def scan_media(db: AsyncSession) -> dict:
                 for key, value in values.items():
                     setattr(existing, key, value)
                 updated += 1
+                touched.append(existing)
             else:
-                db.add(Video(rel_path=rel, **values))
+                created = Video(rel_path=rel, **values)
+                db.add(created)
                 added += 1
+                touched.append(created)
 
     await db.commit()
-    return {"added": added, "updated": updated, "skipped": skipped}
+    # 返回新增/变更的视频 id，供入库流水线接着跑（转音频 + 提取对白）
+    ids = []
+    for video in touched:
+        await db.refresh(video)
+        ids.append(video.id)
+    return {"added": added, "updated": updated, "skipped": skipped, "ids": ids}

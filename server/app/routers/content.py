@@ -4,7 +4,7 @@ from urllib.parse import quote
 import mimetypes
 import re
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response, status
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Request, Response, status
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from sqlalchemy import func, select
@@ -13,6 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from ..config import settings
 from ..db import get_db
 from ..models import Series, Student, Video
+from ..pipeline import run_ingest
 from ..scan import scan_media
 from ..security import read_auth, require_parent
 
@@ -174,9 +175,17 @@ async def patch_video(
 # --------------------------------------------------------------------- scan
 
 @router.post("/scan", dependencies=[Depends(require_parent)])
-async def scan(db: AsyncSession = Depends(get_db)) -> dict:
-    """扫描 MEDIA_ROOT 增量入库（用于没有预处理清单的场景）。"""
-    return await scan_media(db)
+async def scan(background: BackgroundTasks, db: AsyncSession = Depends(get_db)) -> dict:
+    """扫描 MEDIA_ROOT 增量入库。
+
+    默认入库后自动接着跑"转音频 + 提取对白"（AUTO_INGEST=0 可关闭）。
+    """
+    result = await scan_media(db)
+    if settings.auto_ingest and result.get("ids"):
+        background.add_task(run_ingest, result["ids"])
+        result["ingest_started"] = True
+        result["ingest_count"] = len(result["ids"])
+    return result
 
 
 # -------------------------------------------------------------------- media
