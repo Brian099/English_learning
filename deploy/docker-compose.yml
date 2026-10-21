@@ -5,7 +5,11 @@ name: kids-english-listening
 
 services:
   api:
-    build: ../server
+    # 用 GitHub 自动构建好的镜像（推荐，NAS 上无需构建环境）
+    # 想自己构建就加 --build，会以同名 tag 覆盖本地镜像
+    image: ghcr.io/brian099/english_learning:latest
+    build:
+      context: ../server
     environment:
       MEDIA_ROOT: /media
       CACHE_ROOT: /cache

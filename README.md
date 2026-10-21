@@ -8,8 +8,10 @@
 ```
 .
 ├─ README.md
-├─ docs/                     设计稿与分析报告
+├─ .github/workflows/docker.yml  推送 main 自动构建镜像到 GHCR
+├─ docs/                     设计与部署文档
 │  ├─ DESIGN.md              设计稿 v0.2
+│  ├─ deploy-fnos.md         **飞牛 fnOS 部署步骤**
 │  ├─ sample-analysis.md     样本技术分析（编码/响度/时长/命名）
 │  ├─ transcription-report.md 转写结果与参数调优
 │  ├─ model-comparison.md    small.en vs medium.en 选型依据
@@ -21,8 +23,9 @@
 │  └─ app/
 │     ├─ main.py             入口（含静态前端托管）
 │     ├─ config.py           环境变量配置
-│     ├─ db.py               数据库（SQLite / Postgres 双支持）
+│     ├─ db.py               数据库（SQLite / Postgres 双支持 + 轻量迁移）
 │     ├─ models.py           数据表（含 transcript）
+│     ├─ scheduler.py        自动排片（复习 + 难度 + 时长装填）
 │     ├─ security.py         家长令牌 / 设备令牌 / 只读双令牌
 │     ├─ level.py            难度分级（Dolch 词表 + 词形还原）
 │     ├─ scan.py             ffprobe 增量扫描
@@ -31,10 +34,10 @@
 └─ tools/
    ├─ prep.py                预处理：过滤/改名/响度/抽音轨
    ├─ transcribe.py          ASR 转写（faster-whisper）
-   ├─ seed_dev.py            本地灌数据
-   ├─ smoke_test.py          接口冒烟测试（33 项）
-   ├─ ui_test.mjs            家长端 UI 测试（30 项，jsdom）
-   ├─ ui_test_student.mjs    学生端 UI 测试（40 项，jsdom）
+   ├─ import_content.py      导入清单与转写（本地 → 服务端）
+   ├─ smoke_test.py          接口冒烟测试（37 项）
+   ├─ ui_test.mjs            家长端 UI 测试（34 项，jsdom）
+   ├─ ui_test_student.mjs    学生端 UI 测试（43 项，jsdom）
    ├─ pipwrap.py             沙箱下可用的 pip
    ├─ diag_segments.py       转写阈值调试
    └─ compare_transcripts.py 模型对比
@@ -453,7 +456,7 @@ export PARENT_PASSWORD=dev
 cd server && python -m uvicorn app.main:app --port 8010
 
 # 3. 灌样本数据（清单 + 转写 + 自动分级）
-python tools/seed_dev.py --base http://127.0.0.1:8010 --password dev
+python tools/import_content.py --base http://127.0.0.1:8010 --password dev
 
 # 4. 冒烟测试（32 项）
 python tools/smoke_test.py --base http://127.0.0.1:8010 --password dev
