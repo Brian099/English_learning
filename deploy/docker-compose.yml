@@ -1,0 +1,60 @@
+name: kids-english-listening
+
+# 默认用 SQLite：单文件、零运维、备份就是拷一个文件。
+# 需要 Postgres 时，取消文件末尾 postgres 服务的注释并改 DATABASE_URL 即可。
+
+services:
+  api:
+    build: ../server
+    environment:
+      MEDIA_ROOT: /media
+      CACHE_ROOT: /cache
+      # 4 个斜杠 = 容器内绝对路径 /data/kids.db
+      DATABASE_URL: ${DATABASE_URL:-sqlite+aiosqlite:////data/kids.db}
+      # 生产用 nginx 直出（API 不搬运字节）；本地开发没 nginx 时设 direct
+      SERVE_MEDIA: ${SERVE_MEDIA:-accel}
+      APP_SECRET: ${APP_SECRET:?请在 .env 里设置 APP_SECRET}
+      PARENT_PASSWORD: ${PARENT_PASSWORD:?请在 .env 里设置 PARENT_PASSWORD}
+      TZ: ${TZ:-Asia/Shanghai}
+    volumes:
+      # 视频目录：只读挂载，容器内无法写
+      - ${MEDIA_ROOT:?请在 .env 里设置 MEDIA_ROOT}:/media:ro
+      - ./data/cache:/cache
+      # 数据库文件所在目录（必须是 NAS 本地盘，不要放 SMB/NFS 共享）
+      - ./data/sqlite:/data
+    restart: unless-stopped
+
+  web:
+    image: nginx:1.27-alpine
+    ports:
+      - "${HTTP_PORT:-18080}:8080"
+    volumes:
+      - ./nginx/default.conf:/etc/nginx/conf.d/default.conf:ro
+      # nginx 需要能读到文件才能做 X-Accel-Redirect 直出
+      - ${MEDIA_ROOT:?请在 .env 里设置 MEDIA_ROOT}:/media:ro
+    depends_on:
+      - api
+    restart: unless-stopped
+
+# ---------------------------------------------------------------- 可选：Postgres
+# 只有在需要多写入并发（比如将来扩展到班级规模）时才用。
+# 启用步骤：
+#   1. 取消下面注释
+#   2. .env 里设 DATABASE_URL=postgresql+asyncpg://kids:密码@db:5432/kids
+#   3. api 服务加 depends_on: db: {condition: service_healthy}
+#
+#  db:
+#    image: postgres:16-alpine
+#    environment:
+#      POSTGRES_USER: kids
+#      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-kids}
+#      POSTGRES_DB: kids
+#      TZ: ${TZ:-Asia/Shanghai}
+#    volumes:
+#      - ./data/pg:/var/lib/postgresql/data
+#    healthcheck:
+#      test: ["CMD-SHELL", "pg_isready -U kids -d kids"]
+#      interval: 10s
+#      timeout: 5s
+#      retries: 5
+#    restart: unless-stopped

@@ -1,0 +1,110 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>播放自检</title>
+<style>
+  body { font-family: -apple-system, "Microsoft YaHei", sans-serif; margin: 0; padding: 16px;
+         background: #f6f7f9; color: #1c2430; line-height: 1.6; }
+  h1 { font-size: 18px; margin: 0 0 12px; }
+  .card { background: #fff; border: 1px solid #e3e7ee; border-radius: 12px; padding: 14px; margin-bottom: 12px; }
+  .ok { color: #17a673; } .bad { color: #d9453b; } .muted { color: #6b7690; font-size: 13px; }
+  code { background: #f2f4f8; padding: 2px 5px; border-radius: 4px; font-size: 12px; word-break: break-all; }
+  a { color: #3d6bfa; word-break: break-all; font-size: 13px; }
+  button { padding: 10px 16px; border: none; border-radius: 10px; background: #3d6bfa; color: #fff;
+           font-size: 15px; cursor: pointer; }
+  audio { width: 100%; margin-top: 10px; }
+  pre { background: #f2f4f8; padding: 10px; border-radius: 8px; overflow: auto; font-size: 12px; }
+</style>
+</head>
+<body>
+<h1>播放自检</h1>
+<div class="card">
+  <div id="status" class="muted">初始化…</div>
+  <div class="muted" id="token-info"></div>
+</div>
+<div class="card">
+  <button id="run">重新自检</button>
+  <audio id="probe" controls preload="metadata"></audio>
+  <div class="muted" id="probe-info"></div>
+</div>
+<div id="items"></div>
+<script>
+(async function () {
+  const statusEl = document.getElementById('status');
+  const tokenInfo = document.getElementById('token-info');
+  const itemsEl = document.getElementById('items');
+  const probe = document.getElementById('probe');
+  const probeInfo = document.getElementById('probe-info');
+
+  const token = localStorage.getItem('student_token') || '';
+  tokenInfo.textContent = token
+    ? `设备令牌：${token.slice(0, 8)}…（长度 ${token.length}）`
+    : '⚠ 本地没有设备令牌，请先在 /student.html 配对';
+
+  if (!token) {
+    statusEl.innerHTML = '<span class="bad">没有令牌，后面的检查都没意义</span>';
+    return;
+  }
+
+  let today;
+  try {
+    const res = await fetch('/api/student/today', { headers: { Authorization: 'Bearer ' + token } });
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    today = await res.json();
+    statusEl.innerHTML = `<span class="ok">✓ /api/student/today 正常</span> — 学生 ${today.student.name}，共 ${today.items.length} 集`;
+  } catch (err) {
+    statusEl.innerHTML = `<span class="bad">✗ /api/student/today 失败：${err.message}</span>`;
+    return;
+  }
+
+  const first = today.items[0];
+  if (!first) {
+    statusEl.innerHTML += '<br><span class="bad">今天没有任务项</span>';
+    return;
+  }
+
+  const audioUrl = `${first.audio_url}&token=${encodeURIComponent(token)}`;
+  const videoUrl = `${first.video_url}?token=${encodeURIComponent(token)}`;
+
+  // 用 fetch 直接验证媒体地址能不能取到字节
+  async function probeUrl(label, url) {
+    const box = document.createElement('div');
+    box.className = 'card';
+    let html = `<div><b>${label}</b></div><div class="muted"><a href="${url}" target="_blank">${url}</a></div>`;
+    try {
+      const res = await fetch(url, { headers: { Range: 'bytes=0-1023' } });
+      const buf = await res.arrayBuffer();
+      const head = Array.from(new Uint8Array(buf.slice(0, 8)))
+        .map((b) => b.toString(16).padStart(2, '0')).join(' ');
+      const ok = (res.status === 200 || res.status === 206) && buf.byteLength > 0;
+      html += `<div class="${ok ? 'ok' : 'bad'}">${ok ? '✓' : '✗'} 状态 ${res.status} · 类型 ${res.headers.get('content-type')} · ${buf.byteLength} 字节</div>`;
+      html += `<div class="muted">Content-Range: ${res.headers.get('content-range') || '无'} · 前 8 字节 <code>${head}</code></div>`;
+    } catch (err) {
+      html += `<div class="bad">✗ fetch 失败：${err.message}</div>`;
+    }
+    box.innerHTML = html;
+    itemsEl.appendChild(box);
+  }
+
+  await probeUrl('音轨（听模式用）', audioUrl);
+  await probeUrl('视频（看模式用）', videoUrl);
+
+  // 用真正的 <audio> 元素试播，捕获解码层错误
+  probe.src = audioUrl;
+  probe.addEventListener('error', () => {
+    const code = probe.error?.code;
+    const map = { 1: '加载被中止', 2: '网络错误', 3: '解码失败', 4: '地址无效或格式不支持' };
+    probeInfo.innerHTML = `<span class="bad">✗ audio 元素报错：${map[code] || '未知'}（${code}）</span><br>
+      currentSrc = <code>${probe.currentSrc || '(空)'}</code>`;
+  });
+  probe.addEventListener('loadedmetadata', () => {
+    probeInfo.innerHTML = `<span class="ok">✓ audio 元素加载成功</span> — 时长 ${probe.duration.toFixed(1)}s`;
+  });
+
+  document.getElementById('run').addEventListener('click', () => location.reload());
+})();
+</script>
+</body>
+</html>

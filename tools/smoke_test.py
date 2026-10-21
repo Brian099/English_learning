@@ -1,0 +1,200 @@
+#!/usr/bin/env python3
+"""后端冒烟测试：把所有接口按真实使用顺序跑一遍。
+
+用法：
+    python tools/smoke_test.py --base http://127.0.0.1:8010 --password dev
+"""
+from __future__ import annotations
+
+import argparse
+import json
+import urllib.error
+import urllib.request
+import uuid
+from datetime import datetime, timedelta, timezone
+
+PASS, FAIL = 0, 0
+
+
+def call(base, path, method="GET", body=None, token=None, expect_error=False):
+    data = json.dumps(body).encode() if body is not None else None
+    request = urllib.request.Request(base + path, data=data, method=method)
+    request.add_header("Content-Type", "application/json")
+    if token:
+        request.add_header("Authorization", f"Bearer {token}")
+    try:
+        with urllib.request.urlopen(request, timeout=30) as response:
+            payload = response.read().decode()
+            return json.loads(payload) if payload else None
+    except urllib.error.HTTPError as exc:
+        if expect_error:
+            return {"__status": exc.code}
+        raise RuntimeError(f"{method} {path} -> {exc.code}: {exc.read().decode()[:300]}") from exc
+
+
+def check(name, condition, detail=""):
+    global PASS, FAIL
+    if condition:
+        PASS += 1
+        print(f"  ✓ {name}{(' — ' + detail) if detail else ''}")
+    else:
+        FAIL += 1
+        print(f"  ✗ {name}{(' — ' + detail) if detail else ''}")
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--base", default="http://127.0.0.1:8010")
+    parser.add_argument("--password", default="dev")
+    args = parser.parse_args()
+    base = args.base
+
+    print("1. 健康检查与静态页面")
+    health = call(base, "/api/health")
+    check("GET /api/health", health.get("ok") is True, f"db={health.get('database')}")
+    html = urllib.request.urlopen(base + "/", timeout=15).read().decode()
+    check("GET / 返回前端页面", "英语磨耳朵" in html, f"{len(html)} 字节")
+    check("GET /app.js 可访问", "state" in urllib.request.urlopen(base + "/app.js", timeout=15).read().decode())
+
+    print("\n2. 家长登录与鉴权")
+    token = call(base, "/api/admin/login", "POST", {"password": args.password})["token"]
+    check("POST /api/admin/login", bool(token))
+    check("错误密码被拒", call(base, "/api/admin/login", "POST", {"password": "wrong"}, expect_error=True).get("__status") == 401)
+    check("无令牌访问被拒", call(base, "/api/students", expect_error=True).get("__status") == 401)
+
+    print("\n3. 学生")
+    students = call(base, "/api/students", token=token)
+    if not students:
+        call(base, "/api/students", "POST", {"name": "冒烟测试", "daily_target_min": 20}, token)
+        students = call(base, "/api/students", token=token)
+    student_id = students[0]["id"]
+    check("GET /api/students", len(students) > 0, f"{students[0]['name']} (id={student_id})")
+
+    print("\n4. 内容库")
+    series = call(base, "/api/series", token=token)
+    check("GET /api/series", len(series) > 0, f"{len(series)} 个系列")
+    videos = call(base, "/api/videos?limit=500", token=token)
+    check("GET /api/videos", videos["total"] > 0, f"{videos['total']} 集")
+    graded = [v for v in videos["items"] if v["level"]]
+    check("视频带难度分级", len(graded) > 0, f"{len(graded)} 集已分级")
+    first = videos["items"][0]
+    check("视频带时长与语音占比", first["duration_ms"] > 0, f"{first['duration_ms']}ms, 语音 {first['speech_pct']}%")
+    filtered = call(base, f"/api/videos?level={graded[0]['level']}", token=token)
+    check("按难度筛选", filtered["total"] >= 1, f"{graded[0]['level']} → {filtered['total']} 集")
+
+    print("\n5. 转写")
+    detail = call(base, f"/api/videos/{first['id']}", token=token)
+    check("GET /api/videos/{id}", detail["id"] == first["id"])
+    try:
+        transcript = call(base, f"/api/videos/{first['id']}/transcript", token=token)
+        check("GET 转写", transcript["words"] > 0, f"{transcript['words']} 词")
+    except RuntimeError:
+        check("GET 转写", False, "该集没有转写")
+
+    print("\n6. 设备配对")
+    code = call(base, "/api/devices/pair-code", "POST",
+                {"student_id": student_id, "device_name": "冒烟平板"}, token)["code"]
+    check("POST /api/devices/pair-code", len(code) == 6, code)
+    paired = call(base, "/api/devices/pair", "POST",
+                  {"code": code, "device_name": "冒烟平板", "platform": "android"})
+    device_token = paired["token"]
+    check("POST /api/devices/pair", bool(device_token), f"device_id={paired['device_id']}")
+    check("配对码不可重复使用",
+          call(base, "/api/devices/pair", "POST", {"code": code}, expect_error=True).get("__status") == 400)
+    check("设备令牌可读内容库", call(base, "/api/videos?limit=1", token=device_token)["total"] > 0)
+    check("设备令牌不能改计划（需要家长）",
+          call(base, f"/api/plans/{student_id}/2026-01-01", "PUT", {"target_min": 20, "video_ids": []},
+               device_token, expect_error=True).get("__status") == 401)
+
+    print("\n7. 播放事件与幂等")
+    now = datetime.now(timezone.utc)
+    started = now - timedelta(minutes=3)
+    event_id = f"smoke-{uuid.uuid4()}"
+    event = {
+        "event_id": event_id,
+        "video_id": first["id"],
+        "started_at": started.isoformat(),
+        "ended_at": now.isoformat(),
+        "effective_ms": 180000,
+        "max_position_ms": first["duration_ms"],
+        "seek_count": 0,
+        "avg_rate": 1.0,
+        "completed": True,
+        "client_version": "smoke",
+    }
+    result = call(base, "/api/events", "POST", {"events": [event]}, device_token)
+    check("首次上报被接受", result["accepted"] == 1, json.dumps(result, ensure_ascii=False))
+    repeat = call(base, "/api/events", "POST", {"events": [event]}, device_token)
+    check("重复上报不重复计数", repeat["accepted"] == 0 and repeat["duplicate"] == 1,
+          json.dumps(repeat, ensure_ascii=False))
+    bad = dict(event, event_id=f"smoke-{uuid.uuid4()}", video_id=999999)
+    rejected = call(base, "/api/events", "POST", {"events": [bad]}, device_token)
+    check("不存在的视频被拒绝", rejected["rejected"] == 1, json.dumps(rejected, ensure_ascii=False))
+
+    print("\n8. 报表")
+    today = call(base, f"/api/report/{student_id}/today", token=token)
+    check("今日报表有有效时长", today["effective_min"] > 0, f"{today['effective_min']} 分钟 / 目标 {today['target_min']}")
+    week = call(base, f"/api/report/{student_id}/week", token=token)
+    check("本周报表 7 天", len(week["days"]) == 7, f"合计 {week['total_min']} 分钟")
+    attention = call(base, f"/api/report/{student_id}/attention", token=token)
+    check("关注项可返回", "short_sessions" in attention)
+    dashboard = call(base, "/api/dashboard", token=token)
+    check("家长首页聚合", len(dashboard["students"]) > 0, f"{len(dashboard['students'])} 个学生")
+
+    print("\n9. 计划")
+    day = today["day"]
+    ids = [v["id"] for v in videos["items"][:2]]
+    put = call(base, f"/api/plans/{student_id}/{day}", "PUT",
+               {"target_min": 15, "note": "冒烟测试", "video_ids": ids}, token)
+    check("PUT 计划", put["items"] == len(ids), f"{put['items']} 集")
+    plan = call(base, f"/api/plans/{student_id}/{day}", token=token)
+    check("GET 计划回读", len(plan["items"]) == len(ids) and plan["target_min"] == 15)
+    check("设备令牌可读计划", len(call(base, f"/api/plans/{student_id}/{day}", token=device_token)["items"]) == len(ids))
+
+    print("\n10. 媒体播放地址")
+    def fetch_media(path, token_value, extra_headers=None):
+        req = urllib.request.Request(base + path)
+        req.add_header("Authorization", f"Bearer {token_value}")
+        for key, value in (extra_headers or {}).items():
+            req.add_header(key, value)
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            # 键统一小写，避免大小写差异导致断言假失败
+            headers = {key.lower(): value for key, value in resp.headers.items()}
+            return resp.status, headers, resp.read(2048)
+
+    status, headers, body = fetch_media(f"/api/media/{first['id']}", token)
+    redirect = headers.get("x-accel-redirect")
+    if redirect:
+        check("家长令牌可取播放地址（accel 模式）", status == 200 and bool(redirect), redirect)
+    else:
+        check("家长令牌可直接取播放数据（direct 模式）",
+              status == 200 and headers.get("accept-ranges") == "bytes" and len(body) > 0,
+              f"{headers.get('content-type')} · {len(body)}B")
+
+    status, headers, body = fetch_media(f"/api/media/{first['id']}?track=audio", device_token)
+    redirect = headers.get("x-accel-redirect")
+    if redirect:
+        check("设备令牌可取音轨地址", redirect.endswith(".m4a"), redirect)
+    else:
+        check("设备令牌可取音轨数据", status == 200 and headers.get("content-type", "").startswith("audio/"),
+              headers.get("content-type", ""))
+
+    status, headers, body = fetch_media(f"/api/media/{first['id']}?track=audio", token,
+                                       {"Range": "bytes=0-1023"})
+    redirect = headers.get("x-accel-redirect")
+    if redirect:
+        check("Range 请求交给 nginx 处理", bool(redirect))
+    else:
+        check("Range 请求返回 206",
+              status == 206 and headers.get("content-range", "").startswith("bytes 0-1023/"),
+              headers.get("content-range", ""))
+
+    check("不存在的视频返回 404",
+          call(base, "/api/media/999999", token=token, expect_error=True).get("__status") == 404)
+
+    print(f"\n{'='*46}\n通过 {PASS}，失败 {FAIL}")
+    return 0 if FAIL == 0 else 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

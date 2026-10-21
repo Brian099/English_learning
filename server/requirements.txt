@@ -1,0 +1,12 @@
+# 生产依赖（Docker 镜像里装这些）
+fastapi>=0.115,<1
+uvicorn[standard]>=0.30
+sqlalchemy[asyncio]>=2.0
+greenlet>=3.0
+asyncpg>=0.29
+pydantic-settings>=2.4
+itsdangerous>=2.1
+simplemma>=1.1
+
+# 本地开发用 SQLite 时还需要
+aiosqlite>=0.20
