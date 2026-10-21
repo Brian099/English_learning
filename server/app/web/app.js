@@ -319,8 +319,10 @@ async function renderPlan() {
       </div>
       <div class="card">
         <div class="row">
-          <button id="plan-save">保存计划</button>
+          <button id="plan-auto">✨ 自动排片</button>
+          <button id="plan-save" class="ghost">保存手动调整</button>
           <span class="muted" id="plan-count">已选 0 集</span>
+          <span class="muted" id="plan-source"></span>
         </div>
       </div>`;
 
@@ -339,6 +341,7 @@ async function renderPlan() {
       });
     });
     document.getElementById('plan-save').addEventListener('click', savePlan);
+    document.getElementById('plan-auto').addEventListener('click', autoPlan);
 
     await loadPlan();
   } catch (err) {
@@ -370,6 +373,13 @@ async function loadPlan() {
       targetInput.value = existing.target_min ?? (student ? student.daily_target_min : 20);
     }
 
+    const sourceEl = document.getElementById('plan-source');
+    if (sourceEl) {
+      sourceEl.textContent = existing.source === 'auto'
+        ? '· 程序自动排的'
+        : (existing.source === 'manual' ? '· 家长手动排的' : '');
+    }
+
     listEl.innerHTML = data.items.map((video) => `
       <label class="item">
         <input type="checkbox" data-pick="${video.id}" ${state.planSelected.has(video.id) ? 'checked' : ''}>
@@ -396,6 +406,26 @@ async function loadPlan() {
 function updatePlanCount() {
   const el = document.getElementById('plan-count');
   if (el) el.textContent = `已选 ${state.planSelected.size} 集`;
+}
+
+async function autoPlan() {
+  const targetInput = document.getElementById('plan-target');
+  const target = targetInput ? Number(targetInput.value) : 20;
+  try {
+    const query = Number.isFinite(target) && target > 0 ? `?target_min=${target}` : '';
+    const result = await api(`/api/plans/${state.planStudentId}/${state.planDate}/auto${query}`, {
+      method: 'POST',
+    });
+    if (result.message) {
+      toast(result.message);
+      await loadPlan();
+      return;
+    }
+    toast(`已排 ${result.items} 集（复习 ${result.review_count} · 新内容 ${result.new_count}）`);
+    await loadPlan();
+  } catch (err) {
+    toast(err.message);
+  }
 }
 
 async function savePlan() {

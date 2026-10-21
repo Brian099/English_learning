@@ -103,6 +103,8 @@ class Student(Base):
     name: Mapped[str] = mapped_column(String(100))
     avatar: Mapped[str | None] = mapped_column(String(200))
     daily_target_min: Mapped[int] = mapped_column(Integer, default=20)
+    # 当前级别 L1~L5；留空表示由最近完成的内容自动推断
+    level: Mapped[str | None] = mapped_column(String(8))
     active: Mapped[bool] = mapped_column(Boolean, default=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
@@ -178,6 +180,8 @@ class Plan(Base):
     day: Mapped[date] = mapped_column(Date)
     target_min: Mapped[int] = mapped_column(Integer, default=20)
     note: Mapped[str | None] = mapped_column(Text)
+    # manual = 家长手动排的；auto = 程序自动生成（家长可覆盖）
+    source: Mapped[str] = mapped_column(String(16), default="manual")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 

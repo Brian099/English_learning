@@ -7,6 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..db import get_db
 from ..models import Plan, PlanItem, Student, Video
+from ..scheduler import build_daily_plan
 from ..security import read_auth, require_parent
 
 router = APIRouter(prefix="/api", tags=["plan"])
@@ -45,6 +46,7 @@ async def get_plan(
         "day": day.isoformat(),
         "target_min": plan.target_min,
         "note": plan.note,
+        "source": plan.source,
         "items": [
             {
                 "video_id": video.id,
@@ -56,6 +58,76 @@ async def get_plan(
             }
             for item, video in rows
         ],
+    }
+
+
+@router.post("/plans/{student_id}/{day}/auto", dependencies=[Depends(require_parent)])
+async def auto_plan(
+    student_id: int,
+    day: date,
+    target_min: int | None = None,
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """自动排片：复习到期 + 难度匹配 + 时长装填，覆盖该天计划。
+
+    家长之后仍可以在页面上手动调整（手动保存会把 source 改回 manual）。
+    """
+    student = await db.get(Student, student_id)
+    if student is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "学生不存在")
+
+    built = await build_daily_plan(db, student, day, target_min)
+    if not built["items"]:
+        return {
+            "day": day.isoformat(),
+            "target_min": built["target_min"],
+            "level": built["level"],
+            "source": "auto",
+            "items": [],
+            "message": "没有可排的内容（视频库为空，或当天都已完成）",
+        }
+
+    plan = (
+        await db.execute(select(Plan).where(Plan.student_id == student_id, Plan.day == day))
+    ).scalar_one_or_none()
+    if plan is None:
+        plan = Plan(student_id=student_id, day=day)
+        db.add(plan)
+        await db.flush()
+    plan.target_min = built["target_min"]
+    plan.source = "auto"
+    plan.note = (f"自动排片：复习 {built['review_count']} · 新内容 {built['new_count']}"
+                 f" · 重复 {built['repeat_count']}")
+
+    await db.execute(delete(PlanItem).where(PlanItem.plan_id == plan.id))
+    for item in built["items"]:
+        db.add(
+            PlanItem(
+                plan_id=plan.id,
+                video_id=item["video_id"],
+                order_index=item["order"],
+                kind=item["kind"],
+            )
+        )
+    await db.commit()
+
+    total_min = round(built["total_ms"] / 60000, 1)
+    message = None
+    if total_min < built["target_min"] * 0.8:
+        message = (f"内容不足：库里只够排 {total_min} 分钟（目标 {built['target_min']} 分钟），"
+                   f"建议补充视频或调低每日目标")
+
+    return {
+        "day": day.isoformat(),
+        "target_min": built["target_min"],
+        "level": built["level"],
+        "source": "auto",
+        "total_min": total_min,
+        "review_count": built["review_count"],
+        "new_count": built["new_count"],
+        "repeat_count": built["repeat_count"],
+        "items": len(built["items"]),
+        "message": message,
     }
 
 
@@ -85,6 +157,7 @@ async def put_plan(
         await db.flush()
     plan.target_min = body.target_min
     plan.note = body.note
+    plan.source = "manual"   # 家长手动改过，就不再算自动排片
 
     await db.execute(delete(PlanItem).where(PlanItem.plan_id == plan.id))
     for index, video_id in enumerate(body.video_ids):

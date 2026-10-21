@@ -91,8 +91,10 @@ async function main() {
   const cardText = textOf(card);
   check('卡片含今日分钟数与目标', /\d+(\.\d+)?\s*\/\s*\d+\s*分钟/.test(cardText), cardText.slice(0, 60));
   check('卡片含连续天数', /连续\s*\d+\s*天/.test(cardText));
-  check('卡片含本周 7 天柱状图', doc.querySelectorAll('#tab-dashboard .week .day').length === 7,
-    `${doc.querySelectorAll('#tab-dashboard .week .day').length} 根柱子`);
+  const barCounts = [...doc.querySelectorAll('#tab-dashboard .card')]
+    .map((el) => el.querySelectorAll('.week .day').length);
+  check('每张卡片都有 7 天柱状图', barCounts.length > 0 && barCounts.every((n) => n === 7),
+    `${barCounts.length} 个学生，每卡 ${barCounts.join('/')} 根`);
 
   console.log('\n3. 内容库页');
   const libraryTab = doc.querySelector('#tabs button[data-tab="library"]');
@@ -158,6 +160,23 @@ async function main() {
     targetField ? `当前 ${targetField.value}` : '');
   targetField.value = '25';
 
+  // 自动排片按钮
+  const autoBtn = doc.getElementById('plan-auto');
+  check('有「自动排片」按钮', Boolean(autoBtn));
+  autoBtn.dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
+  const autoToast = await waitFor(() => {
+    const el = doc.getElementById('toast');
+    const text = el && !el.classList.contains('hidden') ? textOf(el) : '';
+    return text && (text.includes('已排') || text.includes('内容不足')) ? text : null;
+  });
+  check('自动排片有结果反馈', Boolean(autoToast), autoToast || '');
+  await waitFor(() => doc.querySelectorAll('#plan-list .item').length > 0);
+  check('自动排片后列表刷新', doc.querySelectorAll('#plan-list input[type=checkbox]').length > 0);
+  check('显示计划来源', textOf(doc.getElementById('plan-source')).length > 0,
+    textOf(doc.getElementById('plan-source')));
+
+  // 先清掉上一个 toast，避免读到自动排片的提示
+  doc.getElementById('toast').classList.add('hidden');
   doc.getElementById('plan-save').dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
   const toastText = await waitFor(() => {
     const el = doc.getElementById('toast');

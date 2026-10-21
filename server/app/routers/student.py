@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from ..config import settings
 from ..db import get_db
 from ..models import DailyStat, Device, Plan, PlanItem, PlayEvent, Student, Video
+from ..scheduler import build_daily_plan
 from ..security import current_device
 
 router = APIRouter(prefix="/api", tags=["student"])
@@ -37,7 +38,8 @@ async def student_today(
 ) -> dict:
     """孩子端首页：今天要听什么 + 已经听了多少。
 
-    没有计划时退回"按难度排序的全部视频"，保证孩子点开就有东西听。
+    当天没有计划时**自动排片并落库**——家长不用每天手动挑，
+    打开就是一份"复习到期 + 难度匹配 + 时长装填"的清单。
     """
     student = await db.get(Student, device.student_id)
     if student is None:
@@ -47,6 +49,32 @@ async def student_today(
     plan = (
         await db.execute(select(Plan).where(Plan.student_id == student.id, Plan.day == day))
     ).scalar_one_or_none()
+
+    # 没计划就自动生成一份（家长之后可以在网页上改，改了就不再自动覆盖）
+    if plan is None:
+        built = await build_daily_plan(db, student, day)
+        if built["items"]:
+            plan = Plan(
+                student_id=student.id,
+                day=day,
+                target_min=built["target_min"],
+                source="auto",
+                note=f"自动排片：复习 {built['review_count']} · 新内容 {built['new_count']}"
+                     f" · 重复 {built['repeat_count']}",
+            )
+            db.add(plan)
+            await db.flush()
+            for item in built["items"]:
+                db.add(
+                    PlanItem(
+                        plan_id=plan.id,
+                        video_id=item["video_id"],
+                        order_index=item["order"],
+                        kind=item["kind"],
+                    )
+                )
+            await db.commit()
+            await db.refresh(plan)
 
     items: list[dict] = []
     if plan is not None:
@@ -71,6 +99,7 @@ async def student_today(
                 }
             )
     else:
+        # 兜底：视频库太小或全部听完，退回按难度排序
         videos = (
             await db.execute(
                 select(Video).order_by(Video.level, Video.id).limit(20)
@@ -120,6 +149,7 @@ async def student_today(
         "effective_min": effective_min,
         "completed_count": stat.completed_count if stat else 0,
         "has_plan": plan is not None,
+        "plan_source": plan.source if plan else None,
         "items": items,
     }
 

@@ -192,6 +192,20 @@ def main() -> int:
     check("不存在的视频返回 404",
           call(base, "/api/media/999999", token=token, expect_error=True).get("__status") == 404)
 
+    print("\n11. 自动排片")
+    auto = call(base, f"/api/plans/{student_id}/{day}/auto?target_min=10", "POST", token=token)
+    check("POST 自动排片", auto["items"] >= 1,
+          f"{auto['items']} 集 · {auto.get('total_min')} 分钟 · 级别 {auto.get('level')}")
+    check("返回构成（复习/新/重复）",
+          all(key in auto for key in ("review_count", "new_count", "repeat_count")),
+          f"复习 {auto['review_count']} / 新 {auto['new_count']} / 重复 {auto['repeat_count']}")
+    auto_plan = call(base, f"/api/plans/{student_id}/{day}", token=token)
+    check("计划来源标记为 auto", auto_plan.get("source") == "auto", str(auto_plan.get("source")))
+    call(base, f"/api/plans/{student_id}/{day}", "PUT",
+         {"target_min": 10, "video_ids": [videos["items"][0]["id"]]}, token)
+    check("手动保存后来源变 manual",
+          call(base, f"/api/plans/{student_id}/{day}", token=token).get("source") == "manual")
+
     print(f"\n{'='*46}\n通过 {PASS}，失败 {FAIL}")
     return 0 if FAIL == 0 else 1
 
