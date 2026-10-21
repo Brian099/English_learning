@@ -1,15 +1,20 @@
 name: kids-english-listening
 
-# 默认用 SQLite：单文件、零运维、备份就是拷一个文件。
-# 需要 Postgres 时，取消文件末尾 postgres 服务的注释并改 DATABASE_URL 即可。
+# 飞牛 fnOS 部署用的自包含 compose —— 整个目录拷到 NAS 就能跑。
+# 镜像从 Docker Hub 拉取，不需要源码、不需要在 NAS 上构建。
+#
+# 用法：
+#   1. cp .env.example .env   然后改 MEDIA_ROOT / APP_SECRET / PARENT_PASSWORD
+#   2. docker compose pull && docker compose up -d
+#
+# 想从源码自己构建：把仓库整体 clone 下来，在仓库的 deploy/ 目录里
+# 把下面 api 服务的 build 段取消注释即可（context 指向 ../server）。
 
 services:
   api:
-    # 用 GitHub Actions 自动构建好的镜像（Docker Hub，公开可拉）
-    # 想自己构建就加 --build，会以同名 tag 覆盖本地镜像
     image: brian9909/moer:latest
-    build:
-      context: ../server
+    # build:
+    #   context: ../server
     environment:
       MEDIA_ROOT: /media
       CACHE_ROOT: /cache
