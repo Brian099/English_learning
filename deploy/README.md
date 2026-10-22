@@ -104,7 +104,7 @@ english-kids/
    └─ Alphablocks_S01E01.mp4
 ```
 
-> `web` 服务里也有同样的挂载，**两处路径必须一致**，否则 nginx 找不到文件。
+> 容器内固定挂到 `/media`（只读），程序改不了你的原始文件。
 
 ---
 
@@ -133,7 +133,6 @@ docker compose pull && docker compose up -d
 | 操作 | 命令 |
 |---|---|
 | 看应用日志 | `docker compose logs -f api` |
-| 看 nginx 日志 | `docker compose logs -f web` |
 | 重启 | `docker compose restart` |
 | 停止 | `docker compose down` |
 | 备份数据库 | `docker compose stop && cp data/kids.db ~/kids-backup.db` |

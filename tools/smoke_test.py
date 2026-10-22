@@ -173,31 +173,20 @@ def main() -> int:
             return resp.status, headers, resp.read(2048)
 
     status, headers, body = fetch_media(f"/api/media/{first['id']}", token)
-    redirect = headers.get("x-accel-redirect")
-    if redirect:
-        check("家长令牌可取播放地址（accel 模式）", status == 200 and bool(redirect), redirect)
-    else:
-        check("家长令牌可直接取播放数据（direct 模式）",
-              status == 200 and headers.get("accept-ranges") == "bytes" and len(body) > 0,
-              f"{headers.get('content-type')} · {len(body)}B")
+    check("家长令牌可取播放数据",
+          status == 200 and headers.get("accept-ranges") == "bytes" and len(body) > 0,
+          f"{headers.get('content-type')} · {len(body)}B")
 
     status, headers, body = fetch_media(f"/api/media/{first['id']}?track=audio", device_token)
-    redirect = headers.get("x-accel-redirect")
-    if redirect:
-        check("设备令牌可取音轨地址", redirect.endswith(".m4a"), redirect)
-    else:
-        check("设备令牌可取音轨数据", status == 200 and headers.get("content-type", "").startswith("audio/"),
-              headers.get("content-type", ""))
+    check("设备令牌可取音轨数据",
+          status == 200 and headers.get("content-type", "").startswith("audio/"),
+          headers.get("content-type", ""))
 
     status, headers, body = fetch_media(f"/api/media/{first['id']}?track=audio", token,
                                        {"Range": "bytes=0-1023"})
-    redirect = headers.get("x-accel-redirect")
-    if redirect:
-        check("Range 请求交给 nginx 处理", bool(redirect))
-    else:
-        check("Range 请求返回 206",
-              status == 206 and headers.get("content-range", "").startswith("bytes 0-1023/"),
-              headers.get("content-range", ""))
+    check("Range 请求返回 206",
+          status == 206 and headers.get("content-range", "").startswith("bytes 0-1023/"),
+          headers.get("content-range", ""))
 
     check("不存在的视频返回 404",
           call(base, "/api/media/999999", token=token, expect_error=True).get("__status") == 404)

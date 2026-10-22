@@ -1,5 +1,4 @@
 from pathlib import Path
-from urllib.parse import quote
 
 import mimetypes
 import re
@@ -263,13 +262,10 @@ async def media(
     _auth: dict = Depends(read_auth),
     db: AsyncSession = Depends(get_db),
 ) -> Response:
-    """鉴权后发文件。
+    """鉴权后按 Range 流式发送文件。
 
-    两种模式（config.serve_media）：
-      - accel  ：只回 X-Accel-Redirect，由 nginx 直出，API 不搬运字节（生产）
-      - direct ：FastAPI 自己按 Range 流式返回（本地开发，没有 nginx 也能播）
-
-    track=audio 时返回仅音轨版本（体积约为视频的 1/36，磨耳朵模式用）。
+    track=audio 时返回仅音轨版本（体积约为视频的 1/35，磨耳朵模式用）。
+    视频走 看模式，音轨走 听模式。
     """
     video = await db.get(Video, video_id)
     if video is None:
@@ -286,7 +282,6 @@ async def media(
         return _direct_media(cache_video, request)
 
     if track == "audio" and not rel and cache_audio.is_file():
-        # cache 里的文件不在 nginx 的 /_media/ 映射下，直接由 API 按 Range 发
         return _direct_media(cache_audio, request)
 
     rel = rel or video.rel_path
@@ -297,14 +292,4 @@ async def media(
     if not absolute.is_file():
         raise HTTPException(status.HTTP_404_NOT_FOUND, "文件不在磁盘上，请检查挂载")
 
-    if settings.serve_media == "direct":
-        return _direct_media(absolute, request)
-
-    internal = "/_media/" + quote(rel, safe="/")
-    return Response(
-        status_code=status.HTTP_200_OK,
-        headers={
-            "X-Accel-Redirect": internal,
-            "Cache-Control": "private, max-age=3600",
-        },
-    )
+    return _direct_media(absolute, request)

@@ -4,8 +4,8 @@ name: kids-english-listening
 #
 #   docker compose up -d
 #
-# 只有一个 api 容器，媒体文件由它自己按 Range 发送（SERVE_MEDIA=direct）。
-# 实测 Python 直发 165 MB/s，1080p 播放只需 0.3 MB/s，完全够用。
+# 只有一个 api 容器：后端 + 前端页面 + 媒体按 Range 直发。
+# 实测直发 165 MB/s，1080p 播放只需 0.3 MB/s，不需要额外的 nginx。
 # HTTPS 交给你的反向代理。
 
 services:
@@ -13,8 +13,6 @@ services:
     image: brian9909/moer:latest
     environment:
       TZ: Asia/Shanghai
-      # 没有前置 nginx，由 API 自己按 Range 流式发文件
-      SERVE_MEDIA: direct
       # 扫描到新视频后自动：统一音量 → 转音频 → 提取对白 → 难度分级
       AUTO_INGEST: "1"
       NORMALIZE_AUDIO: "1"

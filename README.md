@@ -418,14 +418,14 @@ prepared/transcript/
 - 服务端归一化是"入库时一次性"，播放端校正兜住残留误差（实测 ±1.5 dB）和未归一化的历史素材
 - 浏览器里做不到真正的 EBU R128（需要整段测量），所以播放端不做测量，只消费服务端算好的数值
 
-### 媒体怎么发：`SERVE_MEDIA`
+### 媒体怎么发
 
-| 值 | 行为 | 用在哪 |
-|---|---|---|
-| `direct`（默认） | FastAPI 自己按 Range 流式返回 | 默认部署（实测 165 MB/s） |
-| `accel` | 只回 `X-Accel-Redirect`，交给前置 nginx 直出 | 自备 nginx 且想完全不动 API 时可切 |
+API 自己按 Range 流式发送文件（`StreamingResponse`，64KB 分块），**不需要 nginx**。
 
-**本地开发一定要设 `SERVE_MEDIA=direct`**，否则浏览器收到空响应体，播放器一片安静——接口返回 200 但没有任何字节，现象很像"坏了"。
+实测：42 MB 视频整段 165 MB/s、音轨 81 MB/s、Range 请求 10 ms。
+1080p 播放只需 0.3 MB/s，1–3 个孩子余量几十倍。
+
+HTTPS 由用户自备的反向代理终结，容器只暴露一个 HTTP 端口。
 
 技术选型：原生 HTML/CSS/JS，约 1200 行，无框架无构建。界面只有几个页面、使用者是家长和孩子，上 React 的构建链维护成本大于收益。
 
@@ -461,11 +461,10 @@ prepared/transcript/
 python tools/pipwrap.py install --target .server-libs \
     uvicorn sqlalchemy aiosqlite pydantic-settings itsdangerous simplemma greenlet
 
-# 2. 启动（direct 模式，API 自己发媒体，不需要 nginx）
+# 2. 启动
 export PYTHONPATH=$PWD/.server-libs
 export DATABASE_URL="sqlite+aiosqlite:///$PWD/dev.db"
 export MEDIA_ROOT="$PWD/prepared"
-export SERVE_MEDIA=direct
 export APP_SECRET=dev-secret
 export PARENT_PASSWORD=dev
 cd server && python -m uvicorn app.main:app --port 8010

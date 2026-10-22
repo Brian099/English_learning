@@ -49,11 +49,6 @@ class Settings(BaseSettings):
     # HuggingFace 镜像；国内直连 huggingface.co 基本不通
     hf_endpoint: str = "https://hf-mirror.com"
 
-    # 媒体文件怎么发：
-    #   direct = FastAPI 自己按 Range 流式返回（默认，单容器部署）
-    #   accel  = 只回 X-Accel-Redirect，交给前置 nginx 直出（可选，需要自备 nginx）
-    serve_media: str = "direct"
-
 
 settings = Settings()
 

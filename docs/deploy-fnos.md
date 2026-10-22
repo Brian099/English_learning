@@ -192,7 +192,7 @@ docker compose pull && docker compose up -d
 
 | 现象 | 原因与处理 |
 |---|---|
-| 页面能打开但播放失败（错误码 4） | ① 设备令牌过期 → 学生端点「重新配对」；② `SERVE_MEDIA` 被改成了 `accel` 但前面没有 nginx（应保持 `direct`） |
+| 页面能打开但播放失败（错误码 4） | 设备令牌过期 → 学生端点「重新配对」 |
 | 媒体 404 | compose 里两处媒体路径不一致，或视频没放对目录 |
 | 入库一直卡住 | `docker compose logs -f api`，多半是模型下载失败，检查 `HF_ENDPOINT` |
 | `data/` 权限错误 | 确认目录属于运行 Docker 的用户 |
