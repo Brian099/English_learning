@@ -114,7 +114,7 @@ english-kids/
 ```bash
 docker compose pull
 docker compose up -d
-docker compose ps          # 只有 api 和 web 两个容器
+docker compose ps          # 只有一个 api 容器
 docker compose logs -f api
 ```
 
@@ -222,7 +222,7 @@ curl -s -X POST $BASE/api/events -H "Authorization: Bearer $DEV" \
 curl -s "$BASE/api/report/1/today" -H "Authorization: Bearer $TOKEN"
 ```
 
-第 8 步是关键：**返回 206 说明 nginx 的 X-Accel-Redirect + Range 通了**，ExoPlayer 才能拖进度和续传。
+第 8 步是关键：**返回 206 说明 Range 通了**，播放器才能拖进度和续传。
 
 ---
 
@@ -423,8 +423,8 @@ prepared/transcript/
 
 | 值 | 行为 | 用在哪 |
 |---|---|---|
-| `accel`（默认） | API 只回 `X-Accel-Redirect`，nginx 直出文件 | NAS 生产环境 |
-| `direct` | FastAPI 自己按 Range 流式返回 | 本地开发（没有 nginx） |
+| `direct`（默认） | FastAPI 自己按 Range 流式返回，**单容器即可** | 默认部署（实测 165 MB/s） |
+| `accel` | API 只回 `X-Accel-Redirect`，由前置 nginx 直出 | 用 `docker-compose.nginx.yml` 时 |
 
 **本地开发一定要设 `SERVE_MEDIA=direct`**，否则浏览器收到空响应体，播放器一片安静——接口返回 200 但没有任何字节，现象很像"坏了"。
 

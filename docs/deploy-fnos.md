@@ -1,12 +1,16 @@
 # 在飞牛 fnOS 上部署
 
-整套服务只有两个容器：`api`（FastAPI + 前端）和 `web`（nginx）。
-数据库默认用 SQLite（一个文件），不需要额外的数据库容器。
+**默认单容器**：`api` 一个容器搞定后端 + 前端 + 媒体分发，数据库用 SQLite（一个文件）。
 
 **零配置**：改一行媒体路径就能跑，不需要 `.env`。
 
 镜像由 GitHub Actions 自动构建并推送到 Docker Hub：**`brian9909/moer:latest`**。
 NAS 上**不需要装 Python、不需要编译**，只要能跑 Docker。
+
+> 为什么不用 nginx？实测 API 直发媒体 165 MB/s、Range 请求 10 ms，
+> 1080p 播放只需 0.3 MB/s。1–3 个孩子完全够用。
+> 如果前面没有反向代理、或想让 API 完全不碰字节，可以用
+> `docker-compose.nginx.yml` 的两容器版本。
 
 ---
 
@@ -40,23 +44,23 @@ english-kids/
 
 ```
 kids-english/
-├─ docker-compose.yml
+├─ docker-compose.yml          ← 单容器（默认用这个）
+├─ docker-compose.nginx.yml    ← 可选：两容器版本
 ├─ README.md
-└─ nginx/default.conf
+└─ nginx/default.conf          ← 只有两容器版本需要
 ```
 
 ### 2. 改媒体路径（唯一要改的地方）
 
-`docker-compose.yml` 里有两处相同的路径，**改成你自己的视频目录**：
+`docker-compose.yml` 里这一行，**改成你自己的视频目录**：
 
 ```yaml
 volumes:
-  - /vol1/1000/media/english-kids:/media:ro     # ← api 服务
-  ...
-  - /vol1/1000/media/english-kids:/media:ro     # ← web 服务（必须一致）
+  - /vol1/1000/media/english-kids:/media:ro
 ```
 
 > 容器内路径固定是 `/media`，只读挂载——程序改不了你的原始文件。
+> 用两容器版本时，`api` 和 `web` 两处路径必须一致。
 
 ### 3. 启动
 
@@ -67,7 +71,7 @@ docker compose up -d
 docker compose ps
 ```
 
-看到 `api` 和 `web` 都是 `Up` 即可。
+看到 `api` 是 `Up` 即可（两容器版本还会有一个 `web`）。
 
 ### 4. 验证
 
@@ -139,6 +143,16 @@ server {
     location /api/admin/login {
         limit_req zone=login burst=3 nodelay;
         proxy_pass http://192.168.1.10:18080;
+        proxy_set_header Host $host;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+
+    # 媒体是流式传输，关掉缓冲避免整段落盘
+    location /api/media/ {
+        proxy_pass http://192.168.1.10:18080;
+        proxy_buffering off;
+        proxy_max_temp_file_size 0;
+        proxy_read_timeout 300s;
         proxy_set_header Host $host;
         proxy_set_header X-Forwarded-Proto $scheme;
     }

@@ -1,19 +1,20 @@
 name: kids-english-listening
 
-# 飞牛 fnOS 部署用 —— 零配置：改下面那一行媒体路径就能跑。
-# 不需要 .env，不需要在 NAS 上构建，镜像从 Docker Hub 拉取。
+# 飞牛 fnOS 部署用 —— 单容器、零配置：改下面那一行媒体路径就能跑。
 #
 #   docker compose up -d
 #
-# 只暴露一个 HTTP 端口，HTTPS 交给你的反向代理。
+# 只有一个 api 容器，媒体文件由它自己按 Range 发送（SERVE_MEDIA=direct）。
+# 实测 Python 直发 165 MB/s，1080p 播放只需 0.3 MB/s，完全够用。
+# HTTPS 交给你的反向代理。
 
 services:
   api:
     image: brian9909/moer:latest
     environment:
       TZ: Asia/Shanghai
-      # 媒体由前置 nginx 直出（API 不搬运字节）
-      SERVE_MEDIA: accel
+      # 没有前置 nginx，由 API 自己按 Range 流式发文件
+      SERVE_MEDIA: direct
       # 扫描到新视频后自动：统一音量 → 转音频 → 提取对白 → 难度分级
       AUTO_INGEST: "1"
       NORMALIZE_AUDIO: "1"
@@ -21,9 +22,12 @@ services:
       TARGET_LUFS: "-16"
       WHISPER_MODEL: small.en
       WHISPER_THREADS: "3"
-      # 家长端登录密码：不填就是 kids1234，建议改成自己的
+      # 家长端登录密码：建议改成自己的
       PARENT_PASSWORD: kids1234
       # APP_SECRET 不用填，首次启动自动生成并存到 ./data/.app_secret
+    ports:
+      # 只暴露这一个 HTTP 端口，前面接你自己的反代做 HTTPS
+      - "18080:8000"
     volumes:
       # ↓↓↓ 只改这一行：你的视频目录（宿主机绝对路径）↓↓↓
       - /vol1/1000/media/english-kids:/media:ro
@@ -31,17 +35,4 @@ services:
       - ./data:/data
       - ./data/cache:/cache
       - ./data/models:/models
-    restart: unless-stopped
-
-  web:
-    image: nginx:1.27-alpine
-    ports:
-      # 只暴露这一个 HTTP 端口，前面接你自己的反代做 HTTPS
-      - "18080:8080"
-    volumes:
-      - ./nginx/default.conf:/etc/nginx/conf.d/default.conf:ro
-      # nginx 要能读到文件才能做 X-Accel-Redirect 直出，路径必须和上面一致
-      - /vol1/1000/media/english-kids:/media:ro
-    depends_on:
-      - api
     restart: unless-stopped

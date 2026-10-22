@@ -1,15 +1,30 @@
 # 部署包（飞牛 fnOS / 任意 Linux）
 
-**零配置**：改一行媒体路径就能跑，不需要 `.env`，不需要在 NAS 上构建。
+**单容器、零配置**：改一行媒体路径就能跑，不需要 `.env`，不需要在 NAS 上构建。
 镜像从 Docker Hub 拉取：`brian9909/moer:latest`
 
 ```
 kids-english/
-├─ docker-compose.yml
-├─ README.md             ← 本文件
+├─ docker-compose.yml         ← 默认：单容器（推荐）
+├─ docker-compose.nginx.yml   ← 可选：带内置 nginx 的两容器版本
+├─ README.md                  ← 本文件
 └─ nginx/
-   └─ default.conf       ← nginx 配置（视频直出 + 反代 API）
+   └─ default.conf            ← 仅两容器版本需要
 ```
+
+## 为什么默认只有一个容器
+
+`api` 自己就能按 Range 发送媒体文件（`SERVE_MEDIA=direct`）。实测吞吐：
+
+| 场景 | 实测 |
+|---|---|
+| 42 MB 视频整段 | 165 MB/s |
+| 1.5 MB 音轨整段 | 81 MB/s |
+| Range 请求 1 MB 片段 | 10 ms |
+
+1080p 视频流只需要 0.3 MB/s，余量几十倍。**1–3 个孩子完全够用**，不需要额外的 nginx。
+
+`docker-compose.nginx.yml` 是给「前面没有自己的反向代理」或「想让 API 完全不碰字节」的场景准备的。
 
 ---
 
@@ -38,12 +53,22 @@ docker compose ps
 ## 只暴露一个 HTTP 端口
 
 ```yaml
-web:
-  ports:
-    - "18080:8080"
+ports:
+  - "18080:8000"
 ```
 
 HTTPS 由你自己的反向代理做，compose 不管证书。反代指向 `http://<NAS内网IP>:18080` 即可。
+
+**反代注意**：媒体是流式传输，建议在反代里对 `/api/media/` 关掉缓冲：
+
+```nginx
+location /api/media/ {
+    proxy_pass http://192.168.1.10:18080;
+    proxy_buffering off;
+    proxy_max_temp_file_size 0;
+    proxy_read_timeout 300s;
+}
+```
 
 ---
 
