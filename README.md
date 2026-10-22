@@ -17,7 +17,7 @@
 │  ├─ transcription-report.md 转写结果与参数调优
 │  ├─ model-comparison.md    small.en vs medium.en 选型依据
 │  └─ frontend-testing.md    前端验证报告（含真机问题记录）
-├─ deploy/                   docker-compose、nginx、.env 模板
+├─ deploy/                   docker-compose、nginx 配置、部署说明
 ├─ server/                   FastAPI 应用
 │  ├─ Dockerfile
 │  ├─ requirements.txt
@@ -67,7 +67,8 @@
 
 **唯一红线**：数据库文件必须放 **NAS 本地盘**，绝不能放 SMB/NFS 共享目录——网络文件系统的锁不可靠，SQLite 会损坏。
 
-要换 Postgres，改 `.env` 里的 `DATABASE_URL` 并取消 compose 文件末尾的注释即可，代码不用动。
+要换 Postgres，取消 compose 末尾注释并在 `api.environment` 里加
+`DATABASE_URL: postgresql+asyncpg://kids:密码@db:5432/kids`，代码不用动。
 
 ---
 
@@ -95,32 +96,31 @@ english-kids/
 
 扫描时第一层目录名自动成为 `series`，文件名成为标题。
 
-### 2. 上传代码并配置
+### 2. 改媒体路径（唯一要改的地方）
 
-```bash
-cd /vol1/1000/docker/kids-english
-cp .env.example .env
-# 编辑 .env：MEDIA_ROOT、APP_SECRET、PARENT_PASSWORD
-# 数据库默认用 SQLite，文件落在 deploy/data/sqlite/kids.db，不需要额外配置
+`docker-compose.yml` 里有两处相同路径，改成你的视频目录：
+
+```yaml
+- /vol1/1000/media/english-kids:/media:ro     # api 服务
+- /vol1/1000/media/english-kids:/media:ro     # web 服务（必须一致）
 ```
 
-`APP_SECRET` 生成一串随机字符：
-
-```bash
-openssl rand -hex 32
-```
+**不需要 `.env`**：`APP_SECRET` 首次启动自动生成并存到 `data/.app_secret`，
+数据库默认 SQLite 落在 `data/kids.db`。家长密码默认 `kids1234`，
+建议改 compose 里 `PARENT_PASSWORD` 那一行。
 
 ### 3. 启动
 
 ```bash
-docker compose up -d --build
+docker compose pull
+docker compose up -d
 docker compose ps          # 只有 api 和 web 两个容器
 docker compose logs -f api
 ```
 
 `/api/health` 返回 `{"ok":true,...}` 即成功。
 
-> fnOS 的 Docker 界面也能导入 compose 项目，但首次 `--build` 建议走 SSH，日志更直观。
+> fnOS 的 Docker 界面也能导入 compose 项目，但首次排查建议走 SSH，日志更直观。
 
 ### 4. 接你的反向代理
 

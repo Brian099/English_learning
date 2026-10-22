@@ -1,3 +1,4 @@
+import logging
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -9,10 +10,16 @@ from .config import settings
 from .db import init_db
 from .routers import auth, content, ingest, maintenance, plan, play, report, student
 
+logger = logging.getLogger("kids")
+
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
     await init_db()
+    if settings.parent_password == "kids1234":
+        logger.warning(
+            "家长密码仍是默认值 kids1234 —— 部署后请在 compose 的 PARENT_PASSWORD 里改掉"
+        )
     yield
 
 

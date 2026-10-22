@@ -8,7 +8,8 @@
 
 ### 1. 把文件拷进媒体目录
 
-拷到 `.env` 里 `MEDIA_ROOT` 指向的目录。**第一层文件夹名 = 系列名**：
+拷到 `docker-compose.yml` 里映射的那个目录（默认 `/vol1/1000/media/english-kids`）。
+**第一层文件夹名 = 系列名**：
 
 ```
 /vol1/1000/media/english-kids/
@@ -77,7 +78,7 @@
 
 100 集大约 1.5–2 小时，可以挂着跑，不影响播放（后台任务）。
 
-想换更准的模型：`.env` 里设 `WHISPER_MODEL=medium.en`（准一些，慢约 3 倍）。
+想换更准的模型：compose 里把 `WHISPER_MODEL` 改成 `medium.en`（准一些，慢约 3 倍）。
 N100 上 medium 约 1 倍实时，100 集要 5 小时以上。
 
 ---
@@ -161,7 +162,7 @@ docker compose logs -f api | grep -i ingest
 
 ### 能只转音频不转写吗？
 
-`.env` 里设 `AUTO_INGEST=0`，扫描就只入库元数据。
+compose 里把 `AUTO_INGEST` 改成 `0`，扫描就只入库元数据。
 然后手动调 `/api/maintenance/extract-audio` 只抽音轨。
 
 ### 模型太大，想省空间？

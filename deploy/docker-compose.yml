@@ -1,82 +1,47 @@
 name: kids-english-listening
 
-# 飞牛 fnOS 部署用的自包含 compose —— 整个目录拷到 NAS 就能跑。
-# 镜像从 Docker Hub 拉取，不需要源码、不需要在 NAS 上构建。
+# 飞牛 fnOS 部署用 —— 零配置：改下面那一行媒体路径就能跑。
+# 不需要 .env，不需要在 NAS 上构建，镜像从 Docker Hub 拉取。
 #
-# 用法：
-#   1. cp .env.example .env   然后改 MEDIA_ROOT / APP_SECRET / PARENT_PASSWORD
-#   2. docker compose pull && docker compose up -d
+#   docker compose up -d
 #
-# 想从源码自己构建：把仓库整体 clone 下来，在仓库的 deploy/ 目录里
-# 把下面 api 服务的 build 段取消注释即可（context 指向 ../server）。
+# 只暴露一个 HTTP 端口，HTTPS 交给你的反向代理。
 
 services:
   api:
     image: brian9909/moer:latest
-    # build:
-    #   context: ../server
     environment:
-      MEDIA_ROOT: /media
-      CACHE_ROOT: /cache
-      # 4 个斜杠 = 容器内绝对路径 /data/kids.db
-      DATABASE_URL: ${DATABASE_URL:-sqlite+aiosqlite:////data/kids.db}
-      # 生产用 nginx 直出（API 不搬运字节）；本地开发没 nginx 时设 direct
-      SERVE_MEDIA: ${SERVE_MEDIA:-accel}
-      # 扫描到新视频后自动转音频 + 提取对白
-      AUTO_INGEST: ${AUTO_INGEST:-1}
-      # 音量统一（EBU R128）：不同来源素材响度能差 14 dB
-      NORMALIZE_AUDIO: ${NORMALIZE_AUDIO:-1}
-      # 看模式也归一化（额外占一份视频空间，约等于原文件大小）
-      NORMALIZE_VIDEO: ${NORMALIZE_VIDEO:-0}
-      TARGET_LUFS: ${TARGET_LUFS:--16}
-      WHISPER_MODEL: ${WHISPER_MODEL:-small.en}
-      WHISPER_THREADS: ${WHISPER_THREADS:-3}
-      MODEL_DIR: /models
-      HF_ENDPOINT: ${HF_ENDPOINT:-https://hf-mirror.com}
-      APP_SECRET: ${APP_SECRET:?请在 .env 里设置 APP_SECRET}
-      PARENT_PASSWORD: ${PARENT_PASSWORD:?请在 .env 里设置 PARENT_PASSWORD}
-      TZ: ${TZ:-Asia/Shanghai}
+      TZ: Asia/Shanghai
+      # 媒体由前置 nginx 直出（API 不搬运字节）
+      SERVE_MEDIA: accel
+      # 扫描到新视频后自动：统一音量 → 转音频 → 提取对白 → 难度分级
+      AUTO_INGEST: "1"
+      NORMALIZE_AUDIO: "1"
+      NORMALIZE_VIDEO: "0"
+      TARGET_LUFS: "-16"
+      WHISPER_MODEL: small.en
+      WHISPER_THREADS: "3"
+      # 家长端登录密码：不填就是 kids1234，建议改成自己的
+      PARENT_PASSWORD: kids1234
+      # APP_SECRET 不用填，首次启动自动生成并存到 ./data/.app_secret
     volumes:
-      # 视频目录：只读挂载，容器内无法写
-      - ${MEDIA_ROOT:?请在 .env 里设置 MEDIA_ROOT}:/media:ro
+      # ↓↓↓ 只改这一行：你的视频目录（宿主机绝对路径）↓↓↓
+      - /vol1/1000/media/english-kids:/media:ro
+      # 数据库 + 密钥 + 缓存 + 转写模型，都落在 compose 同级的 data/ 下
+      - ./data:/data
       - ./data/cache:/cache
-      # 数据库文件所在目录（必须是 NAS 本地盘，不要放 SMB/NFS 共享）
-      - ./data/sqlite:/data
-      # 转写模型缓存（首次运行会下载约 480MB，挂卷避免重建容器后重下）
       - ./data/models:/models
     restart: unless-stopped
 
   web:
     image: nginx:1.27-alpine
     ports:
-      - "${HTTP_PORT:-18080}:8080"
+      # 只暴露这一个 HTTP 端口，前面接你自己的反代做 HTTPS
+      - "18080:8080"
     volumes:
       - ./nginx/default.conf:/etc/nginx/conf.d/default.conf:ro
-      # nginx 需要能读到文件才能做 X-Accel-Redirect 直出
-      - ${MEDIA_ROOT:?请在 .env 里设置 MEDIA_ROOT}:/media:ro
+      # nginx 要能读到文件才能做 X-Accel-Redirect 直出，路径必须和上面一致
+      - /vol1/1000/media/english-kids:/media:ro
     depends_on:
       - api
     restart: unless-stopped
-
-# ---------------------------------------------------------------- 可选：Postgres
-# 只有在需要多写入并发（比如将来扩展到班级规模）时才用。
-# 启用步骤：
-#   1. 取消下面注释
-#   2. .env 里设 DATABASE_URL=postgresql+asyncpg://kids:密码@db:5432/kids
-#   3. api 服务加 depends_on: db: {condition: service_healthy}
-#
-#  db:
-#    image: postgres:16-alpine
-#    environment:
-#      POSTGRES_USER: kids
-#      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-kids}
-#      POSTGRES_DB: kids
-#      TZ: ${TZ:-Asia/Shanghai}
-#    volumes:
-#      - ./data/pg:/var/lib/postgresql/data
-#    healthcheck:
-#      test: ["CMD-SHELL", "pg_isready -U kids -d kids"]
-#      interval: 10s
-#      timeout: 5s
-#      retries: 5
-#    restart: unless-stopped

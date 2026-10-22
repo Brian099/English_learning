@@ -1,3 +1,6 @@
+from pathlib import Path
+import secrets
+
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -10,13 +13,15 @@ class Settings(BaseSettings):
     media_root: str = "/media"
     # 缩略图/转码缓存目录（可写）
     cache_root: str = "/cache"
+    # 数据库与密钥所在目录（可写）
+    data_dir: str = "/data"
 
-    database_url: str = "postgresql+asyncpg://kids:kids@db:5432/kids"
+    database_url: str = "sqlite+aiosqlite:////data/kids.db"
 
-    # 用于签发家长登录令牌，务必改掉
-    app_secret: str = "change-me-please"
-    # 家长端初始密码，首次部署后请改
-    parent_password: str = "change-me-please"
+    # 用于签发家长登录令牌；留空则首次启动自动生成并写入 data_dir/.app_secret
+    app_secret: str = ""
+    # 家长端初始密码
+    parent_password: str = "kids1234"
     # 家长登录令牌有效期（天）
     token_days: int = 30
     # 设备配对码有效期（秒）
@@ -51,3 +56,35 @@ class Settings(BaseSettings):
 
 
 settings = Settings()
+
+
+def _resolve_app_secret() -> None:
+    """APP_SECRET 没配就自动生成一个，持久化到 data_dir，重启不变。
+
+    这样 compose 里不需要写任何密钥，装完就能用；
+    已有的令牌也不会因为重启而失效。
+    """
+    if settings.app_secret:
+        return
+
+    secret_file = Path(settings.data_dir) / ".app_secret"
+    try:
+        if secret_file.is_file():
+            stored = secret_file.read_text(encoding="utf-8").strip()
+            if stored:
+                settings.app_secret = stored
+                return
+        secret_file.parent.mkdir(parents=True, exist_ok=True)
+        generated = secrets.token_hex(32)
+        secret_file.write_text(generated, encoding="utf-8")
+        try:
+            secret_file.chmod(0o600)
+        except OSError:
+            pass
+        settings.app_secret = generated
+    except OSError:
+        # 数据目录不可写时退化为进程内随机值（重启后需重新登录）
+        settings.app_secret = secrets.token_hex(32)
+
+
+_resolve_app_secret()
