@@ -59,20 +59,21 @@
 └───────────────┬──────────────────────────────────────┘
                 │ 局域网 HTTP(S) / 远程 WireGuard
 ┌───────────────▼──────── NAS（Docker Compose）────────┐
-│  nginx      静态视频 Range + 反代 + TLS              │
-│  api        FastAPI：内容/计划/事件/报表/认证         │
-│  worker     ffprobe 扫描、缩略图、按需转码缓存        │
-│  db         PostgreSQL 16                            │
-│  web        家长端 SPA（同一 API，浏览器访问）        │
+│  api        FastAPI：内容/入库流水线/计划/事件/报表    │
+│             同时托管家长端与学生端页面                │
+│             媒体按 Range 直发（实测 165 MB/s）        │
+│  db         SQLite（可选 Postgres）                   │
 │  volume     /media  ← NAS 上的视频目录（只读挂载）    │
+│             /cache  ← 归一化音轨、ASR 输入（可重建）  │
+│             /models ← 转写模型（480MB）              │
 └──────────────────────────────────────────────────────┘
 ```
 
-**为什么这样切**
-- 视频走 nginx 静态 Range，不经应用层，省 CPU、天然支持 seek/续传
-- api 只管元数据与事件，负载极轻，1–3 个孩子一台 NAS 绰绰有余
-- worker 把 ffprobe/ffmpeg 这类重活从请求路径里摘出去
-- 家长 Web 与 App 共用一套 API，避免做第二个客户端
+**为什么这样切（实现后按实测调整过）**
+- 单容器：API 自己按 Range 发媒体，实测 165 MB/s，1080p 只需 0.3 MB/s，不需要额外 nginx
+- 入库流水线（音量归一 + 抽音轨 + 转写 + 分级）跑在后台任务里，不阻塞播放
+- 家长 Web 与学生 Web 共用一套 API 与同一个容器
+- HTTPS 交给用户自备的反向代理，容器只暴露一个 HTTP 端口
 
 ---
 
@@ -216,23 +217,22 @@ ffmpeg 抽音轨（16k mono, highpass=80, loudnorm=I=-16）→ faster-whisper sm
 ## 7. 部署与安全
 
 ```yaml
-# docker-compose.yml 结构（示意）
+# docker-compose.yml 结构（实际实现）
 services:
-  nginx:   # 80/443，静态 /media Range + 反代 /api
-  api:     # FastAPI，内网 8080，仅 nginx 可达
-  worker:  # ffprobe/ffmpeg 任务，挂 /media 只读 + /cache 读写
-  db:      # postgres:16，volume 持久化，不映射端口
+  api:     # 单容器：FastAPI + 前端 + 媒体 Range 直发，只暴露一个端口
 volumes:
-  media:   # NAS 视频目录（只读）
-  cache:   # 缩略图 / 转码缓存
-  pgdata:
+  /media   # NAS 视频目录（只读挂载）
+  ./data   # kids.db + .app_secret
+  ./data/cache   # 归一化音轨 / ASR 输入（可随时删）
+  ./data/models  # 转写模型
 ```
 
 **安全红线**
 - 视频目录容器内**只读挂载**，API 不提供任何写文件接口
-- 数据库不映射宿主机端口
-- 外网访问只走 Tailscale/WireGuard，路由器上不开端口转发
+- 数据库是本地文件，不监听任何端口
+- 容器只暴露一个 HTTP 端口，HTTPS 由用户自备的反向代理终结
 - 家长端强制密码登录；App 用设备 token，不用明文密码
+- `APP_SECRET` 首次启动自动生成并持久化，不写进 compose
 
 ---
 
@@ -240,7 +240,7 @@ volumes:
 
 | 阶段 | 内容 | 验收 |
 |---|---|---|
-| M0 | compose 起 api+db+nginx，健康检查 | `curl /api/health` 通，视频能 Range 播放 |
+| M0 | compose 起单容器 api，健康检查 | `curl /api/health` 通，视频能 Range 播放 |
 | M1 | 内容扫描入库 + 缩略图 + 家长 Web 内容列表 | NAS 上一个目录扫进库，网页能浏览/改标签 |
 | M2 | Android App：库 / 播放器 / 熄屏连播 / 事件上报 | 平板熄屏连听 3 集，网页立刻看到记录 |
 | M3 | 每日计划 + 家长今日/本周报表 + 关注项 | 家长手机上能判断"今天达标了吗" |

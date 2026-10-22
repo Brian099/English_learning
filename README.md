@@ -17,7 +17,7 @@
 │  ├─ transcription-report.md 转写结果与参数调优
 │  ├─ model-comparison.md    small.en vs medium.en 选型依据
 │  └─ frontend-testing.md    前端验证报告（含真机问题记录）
-├─ deploy/                   docker-compose、nginx 配置、部署说明
+├─ deploy/                   docker-compose + 部署说明（单容器）
 ├─ server/                   FastAPI 应用
 │  ├─ Dockerfile
 │  ├─ requirements.txt
@@ -98,11 +98,10 @@ english-kids/
 
 ### 2. 改媒体路径（唯一要改的地方）
 
-`docker-compose.yml` 里有两处相同路径，改成你的视频目录：
+`docker-compose.yml` 里这一行，改成你的视频目录：
 
 ```yaml
-- /vol1/1000/media/english-kids:/media:ro     # api 服务
-- /vol1/1000/media/english-kids:/media:ro     # web 服务（必须一致）
+- /vol1/1000/media/english-kids:/media:ro     # 改成你自己的视频目录
 ```
 
 **不需要 `.env`**：`APP_SECRET` 首次启动自动生成并存到 `data/.app_secret`，
@@ -423,8 +422,8 @@ prepared/transcript/
 
 | 值 | 行为 | 用在哪 |
 |---|---|---|
-| `direct`（默认） | FastAPI 自己按 Range 流式返回，**单容器即可** | 默认部署（实测 165 MB/s） |
-| `accel` | API 只回 `X-Accel-Redirect`，由前置 nginx 直出 | 用 `docker-compose.nginx.yml` 时 |
+| `direct`（默认） | FastAPI 自己按 Range 流式返回 | 默认部署（实测 165 MB/s） |
+| `accel` | 只回 `X-Accel-Redirect`，交给前置 nginx 直出 | 自备 nginx 且想完全不动 API 时可切 |
 
 **本地开发一定要设 `SERVE_MEDIA=direct`**，否则浏览器收到空响应体，播放器一片安静——接口返回 200 但没有任何字节，现象很像"坏了"。
 
@@ -462,7 +461,7 @@ prepared/transcript/
 python tools/pipwrap.py install --target .server-libs \
     uvicorn sqlalchemy aiosqlite pydantic-settings itsdangerous simplemma greenlet
 
-# 2. 启动（本地没有 nginx，必须用 direct 模式，否则播放器拿不到数据）
+# 2. 启动（direct 模式，API 自己发媒体，不需要 nginx）
 export PYTHONPATH=$PWD/.server-libs
 export DATABASE_URL="sqlite+aiosqlite:///$PWD/dev.db"
 export MEDIA_ROOT="$PWD/prepared"

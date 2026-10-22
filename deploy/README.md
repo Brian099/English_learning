@@ -5,16 +5,14 @@
 
 ```
 kids-english/
-├─ docker-compose.yml         ← 默认：单容器（推荐）
-├─ docker-compose.nginx.yml   ← 可选：带内置 nginx 的两容器版本
-├─ README.md                  ← 本文件
-└─ nginx/
-   └─ default.conf            ← 仅两容器版本需要
+├─ docker-compose.yml    ← 就这一个文件（加上本说明）
+└─ README.md
 ```
 
-## 为什么默认只有一个容器
+## 为什么只有一个容器
 
-`api` 自己就能按 Range 发送媒体文件（`SERVE_MEDIA=direct`）。实测吞吐：
+`api` 容器同时负责后端、前端页面和媒体分发，媒体文件由它按 Range 直接发送。
+实测吞吐：
 
 | 场景 | 实测 |
 |---|---|
@@ -23,8 +21,6 @@ kids-english/
 | Range 请求 1 MB 片段 | 10 ms |
 
 1080p 视频流只需要 0.3 MB/s，余量几十倍。**1–3 个孩子完全够用**，不需要额外的 nginx。
-
-`docker-compose.nginx.yml` 是给「前面没有自己的反向代理」或「想让 API 完全不碰字节」的场景准备的。
 
 ---
 

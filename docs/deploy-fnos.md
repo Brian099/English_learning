@@ -8,9 +8,7 @@
 NAS 上**不需要装 Python、不需要编译**，只要能跑 Docker。
 
 > 为什么不用 nginx？实测 API 直发媒体 165 MB/s、Range 请求 10 ms，
-> 1080p 播放只需 0.3 MB/s。1–3 个孩子完全够用。
-> 如果前面没有反向代理、或想让 API 完全不碰字节，可以用
-> `docker-compose.nginx.yml` 的两容器版本。
+> 1080p 播放只需 0.3 MB/s，1–3 个孩子完全够用。少一个容器少一处故障点。
 
 ---
 
@@ -19,7 +17,7 @@ NAS 上**不需要装 Python、不需要编译**，只要能跑 Docker。
 fnOS 的存储卷一般是 `/vol1/<用户ID>/`，先建两个目录：
 
 ```
-/vol1/1000/docker/kids-english/      ← 部署文件（compose、nginx 配置、数据）
+/vol1/1000/docker/kids-english/      ← 部署文件（compose、data 目录）
 /vol1/1000/media/english-kids/       ← 视频
 ```
 
@@ -44,10 +42,8 @@ english-kids/
 
 ```
 kids-english/
-├─ docker-compose.yml          ← 单容器（默认用这个）
-├─ docker-compose.nginx.yml    ← 可选：两容器版本
-├─ README.md
-└─ nginx/default.conf          ← 只有两容器版本需要
+├─ docker-compose.yml    ← 就这一个文件
+└─ README.md
 ```
 
 ### 2. 改媒体路径（唯一要改的地方）
@@ -60,7 +56,6 @@ volumes:
 ```
 
 > 容器内路径固定是 `/media`，只读挂载——程序改不了你的原始文件。
-> 用两容器版本时，`api` 和 `web` 两处路径必须一致。
 
 ### 3. 启动
 
@@ -71,7 +66,7 @@ docker compose up -d
 docker compose ps
 ```
 
-看到 `api` 是 `Up` 即可（两容器版本还会有一个 `web`）。
+看到 `api` 是 `Up` 即可。
 
 ### 4. 验证
 
@@ -197,7 +192,7 @@ docker compose pull && docker compose up -d
 
 | 现象 | 原因与处理 |
 |---|---|
-| 页面能打开但播放失败（错误码 4） | ① 设备令牌过期 → 学生端点「重新配对」；② `SERVE_MEDIA` 被改成了 `direct`（生产应留 `accel`） |
+| 页面能打开但播放失败（错误码 4） | ① 设备令牌过期 → 学生端点「重新配对」；② `SERVE_MEDIA` 被改成了 `accel` 但前面没有 nginx（应保持 `direct`） |
 | 媒体 404 | compose 里两处媒体路径不一致，或视频没放对目录 |
 | 入库一直卡住 | `docker compose logs -f api`，多半是模型下载失败，检查 `HF_ENDPOINT` |
 | `data/` 权限错误 | 确认目录属于运行 Docker 的用户 |

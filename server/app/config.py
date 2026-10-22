@@ -50,9 +50,9 @@ class Settings(BaseSettings):
     hf_endpoint: str = "https://hf-mirror.com"
 
     # 媒体文件怎么发：
-    #   accel  = 只回 X-Accel-Redirect，由前置 nginx 直出（生产默认，CPU 占用接近零）
-    #   direct = FastAPI 自己按 Range 流式返回（本地开发用，没有 nginx 也能播）
-    serve_media: str = "accel"
+    #   direct = FastAPI 自己按 Range 流式返回（默认，单容器部署）
+    #   accel  = 只回 X-Accel-Redirect，交给前置 nginx 直出（可选，需要自备 nginx）
+    serve_media: str = "direct"
 
 
 settings = Settings()
