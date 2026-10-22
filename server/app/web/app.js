@@ -563,10 +563,12 @@ async function renderSettings() {
       const importBtn = document.getElementById('do-import');
       try {
         const result = await api('/api/scan', { method: 'POST' });
-        toast(`已导入 新增 ${result.added || 0}，更新 ${result.updated || 0}` +
-              (result.ingest_started ? '，开始处理' : ''));
+        const parts = [`新增 ${result.added || 0}`, `更新 ${result.updated || 0}`];
+        if (result.removed) parts.push(`清理 ${result.removed}`);
+        toast(parts.join('，') + (result.ingest_started ? '，开始处理' : ''));
         importBtn.classList.add('hidden');
-        resultEl.textContent = `已导入：新增 ${result.added || 0} · 更新 ${result.updated || 0}`;
+        resultEl.textContent = parts.join(' · ') + (result.warning ? `　⚠ ${result.warning}` : '');
+        if (result.warning) resultEl.textContent = `⚠ ${result.warning}`;
         if (result.ingest_started) watchIngest(result.ingest_count);
         else await renderSettings();
       } catch (err) {
@@ -609,15 +611,27 @@ function renderScanResult(data) {
     }).join(' · '));
   }
 
+  if (data.missing > 0) {
+    lines.push(`<b style="color:#c0392b">缺失 ${data.missing} 个</b>：库里有记录但磁盘上找不到，导入时会彻底清理`);
+    if (data.missing_examples && data.missing_examples.length) {
+      lines.push('　例如：' + data.missing_examples.map((m) => esc(m.title)).join('、'));
+    }
+  }
+
   if (data.pending > 0) {
     lines.push(`预计处理 <b>${data.pending}</b> 集，约 <b>${data.estimated_minutes}</b> 分钟`);
     if (data.new_examples && data.new_examples.length) {
       lines.push('新增示例：' + data.new_examples.map(esc).join('、'));
     }
-    importBtn.textContent = `导入并处理 ${data.pending} 个`;
+    importBtn.textContent = data.missing > 0
+      ? `导入 ${data.pending} 个 · 清理 ${data.missing} 个`
+      : `导入并处理 ${data.pending} 个`;
+    importBtn.classList.remove('hidden');
+  } else if (data.missing > 0) {
+    importBtn.textContent = `清理 ${data.missing} 个缺失记录`;
     importBtn.classList.remove('hidden');
   } else {
-    lines.push('没有新增或变化的文件，无需导入。');
+    lines.push('没有新增、变化或缺失的文件，无需导入。');
     importBtn.classList.add('hidden');
   }
 

@@ -4,7 +4,7 @@ import os
 import subprocess
 from pathlib import Path
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from .config import settings
@@ -62,8 +62,66 @@ def _iter_video_files(root: Path):
             yield path.relative_to(root).as_posix(), path, path.stat()
 
 
+async def find_missing(db: AsyncSession) -> list[tuple[int, str, str]]:
+    """库里登记了、但磁盘上已经找不到的视频。
+
+    返回 [(video_id, rel_path, title)]。
+    """
+    root = Path(settings.media_root)
+    rows = (await db.execute(select(Video.id, Video.rel_path, Video.title))).all()
+    missing = []
+    for row in rows:
+        if not (root / row.rel_path).is_file():
+            missing.append((row.id, row.rel_path, row.title))
+    return missing
+
+
+def _purge_cache_files(video_id: int) -> None:
+    """删掉这一集在 cache 里的派生物：音轨、ASR 输入、归一化视频。"""
+    for sub, suffix in (("audio", ".m4a"), ("asr", ".wav"), ("video", ".mp4")):
+        path = Path(settings.cache_root) / sub / f"{video_id}{suffix}"
+        if not path.is_file():
+            continue
+        try:
+            path.unlink()
+        except OSError:
+            pass
+
+
+async def purge_missing(db: AsyncSession, missing: list[tuple[int, str, str]]) -> list[dict]:
+    """把缺失的视频彻底清掉。
+
+    数据库记录删除后，transcript / play_event / plan_item 靠外键级联一起删；
+    cache 里的音轨等派生物单独清理；没有视频的系列也一并删除。
+    """
+    removed = []
+    for video_id, rel_path, title in missing:
+        _purge_cache_files(video_id)
+        video = await db.get(Video, video_id)
+        if video is not None:
+            await db.delete(video)
+        removed.append({"video_id": video_id, "rel_path": rel_path, "title": title})
+
+    if removed:
+        await db.flush()
+        # 清掉已经没有视频的空系列
+        series_ids = (await db.execute(select(Series.id))).scalars().all()
+        for series_id in series_ids:
+            remaining = (
+                await db.execute(
+                    select(func.count(Video.id)).where(Video.series_id == series_id)
+                )
+            ).scalar_one()
+            if remaining == 0:
+                series = await db.get(Series, series_id)
+                if series is not None:
+                    await db.delete(series)
+
+    return removed
+
+
 async def scan_preview(db: AsyncSession) -> dict:
-    """只检测，不写库：告诉你有多少文件、多少是新的、多少变了。
+    """只检测，不写库：告诉你有多少文件、多少是新的、多少变了、多少已经没了。
 
     这一步不动数据库，也不会触发任何转码/转写。
     """
@@ -101,6 +159,7 @@ async def scan_preview(db: AsyncSession) -> dict:
             unchanged += 1
 
     pending = new + changed
+    missing = await find_missing(db)
     return {
         "media_root": str(root),
         "total": total,
@@ -110,6 +169,9 @@ async def scan_preview(db: AsyncSession) -> dict:
         "pending": pending,
         # 每集约 1–1.5 分钟（音量测量 + 抽音轨 + 转写）
         "estimated_minutes": round(pending * 1.2, 1),
+        # 库里有记录但磁盘上已经没有的文件（导入时会被彻底清理）
+        "missing": len(missing),
+        "missing_examples": [{"title": title, "rel_path": rel} for _, rel, title in missing[:8]],
         "series": series,
         "new_examples": new_examples,
     }
@@ -179,4 +241,27 @@ async def scan_media(db: AsyncSession) -> dict:
     for video in touched:
         await db.refresh(video)
         ids.append(video.id)
-    return {"added": added, "updated": updated, "skipped": skipped, "ids": ids}
+
+    # 清理"库里有、磁盘上没有"的记录（连同转写、播放记录、计划项、cache 音轨）
+    missing = await find_missing(db)
+    removed: list[dict] = []
+    warning = None
+    if missing:
+        # 安全阀：媒体目录一个视频都没扫到、而库里全是缺失
+        # 这种情况八成是挂载掉了，不能把库清空
+        if (added + updated + skipped) == 0:
+            warning = (f"媒体目录里一个视频都没找到，但库里有 {len(missing)} 条记录，"
+                       f"疑似挂载异常，已跳过清理")
+        else:
+            removed = await purge_missing(db, missing)
+            await db.commit()
+
+    return {
+        "added": added,
+        "updated": updated,
+        "skipped": skipped,
+        "ids": ids,
+        "removed": len(removed),
+        "removed_items": removed[:20],
+        "warning": warning,
+    }
