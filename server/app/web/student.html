@@ -2,10 +2,10 @@
 <html lang="zh-CN">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<meta name="theme-color" content="#3d6bfa">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+<meta name="theme-color" content="#000000">
 <title>听英语 · 学生端</title>
-<link rel="stylesheet" href="/student.css?v=8">
+<link rel="stylesheet" href="/student.css?v=11">
 </head>
 <body>
 
@@ -61,64 +61,93 @@
   <div id="history-view" class="history hidden"></div>
 </section>
 
-<!-- 3. 播放器 -->
-<section id="screen-player" class="screen player hidden">
-  <button id="player-back" class="icon-btn back">‹ 返回</button>
+<!-- 3. 播放器：抖音式全屏上下滑 -->
+<section id="screen-player" class="feed hidden">
 
-  <div class="mode-switch" id="mode-switch">
-    <button class="mode-btn active" data-mode="audio">🎧 听</button>
-    <button class="mode-btn" data-mode="video">📺 看</button>
+  <!-- 顶部：返回 + 进度 + 常用按钮 -->
+  <div class="hud-top">
+    <button id="player-back" class="hud-btn" title="返回任务">‹</button>
+    <div class="hud-info">
+      <div class="hud-name" id="hud-name">—</div>
+      <div class="hud-sub" id="hud-progress">0 / 0</div>
+    </div>
+    <div class="hud-actions">
+      <button id="btn-autolevel" class="hud-chip on" title="响度校正">🔊</button>
+      <button id="btn-mask" class="hud-chip hidden" title="遮字幕">🙈</button>
+      <button id="btn-loop" class="hud-chip" title="单集循环">🔁</button>
+      <button id="btn-more" class="hud-chip" title="更多">⋯</button>
+    </div>
   </div>
 
-  <div class="media-stage">
-    <div class="cover-art" id="cover-art">🎧</div>
-    <video id="video" class="media-video hidden" playsinline preload="metadata"></video>
-  </div>
+  <!-- 舞台：视频或封面 -->
+  <div class="stage" id="stage">
+    <video id="video" class="stage-video" playsinline preload="metadata"></video>
+    <div class="cover-art hidden" id="cover-art">🎧</div>
 
-  <div class="cover">
-    <div class="cover-title" id="player-title">—</div>
-    <div class="cover-meta" id="player-meta"></div>
-  </div>
+    <div class="stage-caption">
+      <div class="cover-title" id="player-title">—</div>
+      <div class="cover-meta" id="player-meta"></div>
+    </div>
 
-  <div class="seek">
-    <div class="seek-bar"><div class="seek-fill" id="seek-fill"></div></div>
-    <div class="seek-time"><span id="cur-time">0:00</span><span id="dur-time">0:00</span></div>
-  </div>
+    <!-- 硬字幕遮挡条（在看模式下盖住画面底部） -->
+    <div class="subtitle-mask off" id="subtitle-mask"></div>
 
-  <div class="controls">
-    <button id="btn-prev" class="icon-btn">⏮</button>
+    <!-- 中央播放键 -->
     <button id="btn-play" class="round-btn">▶</button>
-    <button id="btn-next" class="icon-btn">⏭</button>
   </div>
 
-  <div class="extras">
-    <button id="btn-loop" class="chip">🔁 单集循环</button>
-    <button id="btn-rate" class="chip">1.0×</button>
-    <button id="btn-autolevel" class="chip on">🔊 自动音量</button>
-    <button id="btn-voice" class="chip">🎚 人声增强</button>
-    <button id="btn-mask" class="chip hidden">🙈 遮字幕</button>
-    <label class="chip mask-slider hidden" id="mask-slider-wrap">
-      高度 <input type="range" id="mask-height" min="8" max="40" step="2" value="20">
-      <span id="mask-value">20%</span>
-    </label>
+  <!-- 底部：进度 + 提示 -->
+  <div class="hud-bottom">
+    <div class="seek">
+      <div class="seek-bar"><div class="seek-fill" id="seek-fill"></div></div>
+      <div class="seek-time"><span id="cur-time">0:00</span><span id="dur-time">0:00</span></div>
+    </div>
+    <p class="tip" id="player-tip">上滑切换下一集</p>
+    <button id="repair-btn" class="repair hidden">🔗 配对已失效，点这里重新配对</button>
   </div>
 
-  <div class="volume-row">
-    <span class="vol-icon">🔈</span>
-    <input type="range" id="volume" min="0" max="100" step="5" value="100">
-    <span class="vol-value" id="volume-value">100%</span>
+  <!-- 展开面板：不常用按钮 -->
+  <div class="sheet" id="sheet">
+    <div class="sheet-handle"></div>
+
+    <div class="sheet-row">
+      <span class="sheet-label">模式</span>
+      <div class="mode-switch" id="mode-switch">
+        <button class="mode-btn" data-mode="video">📺 看</button>
+        <button class="mode-btn active" data-mode="audio">🎧 听</button>
+      </div>
+    </div>
+
+    <div class="sheet-row">
+      <span class="sheet-label">倍速</span>
+      <button id="btn-rate" class="chip">1.0×</button>
+      <button id="btn-voice" class="chip">🎚 人声增强</button>
+    </div>
+
+    <div class="sheet-row">
+      <span class="sheet-label">音量</span>
+      <input type="range" id="volume" min="0" max="100" step="5" value="100">
+      <span class="vol-value" id="volume-value">100%</span>
+    </div>
+
+    <div class="sheet-row hidden" id="mask-slider-wrap">
+      <span class="sheet-label">遮罩</span>
+      <input type="range" id="mask-height" min="8" max="40" step="2" value="20">
+      <span class="vol-value" id="mask-value">20%</span>
+    </div>
+
+    <div class="sheet-row">
+      <button id="btn-prev" class="chip">⏮ 上一集</button>
+      <button id="btn-next" class="chip">⏭ 下一集</button>
+    </div>
+
+    <p class="tip" id="volume-tip"></p>
   </div>
-  <p class="tip" id="volume-tip"></p>
 
-  <p class="tip" id="player-tip">熄屏也能继续听哦</p>
-  <button id="repair-btn" class="chip hidden" style="margin:0 auto;display:block">🔗 配对已失效，点这里重新配对</button>
-
-  <!-- 硬字幕遮挡条：素材是双行双语艺术字，关不掉，只能盖住 -->
-  <div class="subtitle-mask" id="subtitle-mask"></div>
   <audio id="audio" preload="metadata"></audio>
 </section>
 
 <div id="toast" class="toast hidden"></div>
-<script src="/student.js?v=9"></script>
+<script src="/student.js?v=11"></script>
 </body>
 </html>

@@ -9,7 +9,7 @@ const state = {
   index: 0,
   loop: false,
   rate: 1.0,
-  mode: localStorage.getItem('player_mode') || 'audio',   // audio | video
+  mode: localStorage.getItem('player_mode') || 'video',   // video（默认，以视频为主）| audio
   volume: Number(localStorage.getItem('volume') ?? 100),   // 0-100
   voiceBoost: false,                                        // 人声增强（Web Audio）
   maskOn: localStorage.getItem('mask_on') === '1',          // 默认不遮，家长可开
@@ -511,10 +511,66 @@ function renderMode() {
   document.getElementById('cover-art').classList.toggle('hidden', isVideo);
   video.classList.toggle('hidden', !isVideo);
   document.getElementById('player-tip').textContent = isVideo
-    ? '看模式下熄屏会暂停，想一直听就切回「听」'
+    ? '上滑下一集 · 下滑上一集'
     : '熄屏也能继续听哦';
   applyMask();
 }
+
+/* ------------------------------------------------------------ 展开面板 */
+
+function toggleSheet(force) {
+  const feed = document.getElementById('screen-player');
+  const open = force === undefined ? !feed.classList.contains('expanded') : force;
+  feed.classList.toggle('expanded', open);
+  document.getElementById('btn-more').classList.toggle('on', open);
+}
+
+document.getElementById('btn-more').addEventListener('click', () => toggleSheet());
+
+/* ------------------------------------------------------------ 上下滑切换 */
+
+const stage = document.getElementById('stage');
+let touchStartY = null;
+let wheelLock = false;
+
+function slideTo(delta) {
+  if (delta === 0) return;
+  stage.classList.add(delta > 0 ? 'slide-up' : 'slide-down');
+  setTimeout(() => {
+    stage.classList.remove('slide-up', 'slide-down');
+    step(delta);
+  }, 180);
+}
+
+stage.addEventListener('touchstart', (event) => {
+  if (event.touches.length !== 1) return;
+  touchStartY = event.touches[0].clientY;
+}, { passive: true });
+
+stage.addEventListener('touchend', (event) => {
+  if (touchStartY === null) return;
+  const endY = event.changedTouches[0]?.clientY ?? touchStartY;
+  const dy = touchStartY - endY;      // 上滑为正
+  touchStartY = null;
+  if (Math.abs(dy) < 55) return;      // 太小当点击
+  slideTo(dy > 0 ? 1 : -1);
+}, { passive: true });
+
+// 桌面端滚轮
+stage.addEventListener('wheel', (event) => {
+  if (wheelLock || Math.abs(event.deltaY) < 12) return;
+  wheelLock = true;
+  slideTo(event.deltaY > 0 ? 1 : -1);
+  setTimeout(() => { wheelLock = false; }, 600);
+}, { passive: true });
+
+// 键盘上下键
+window.addEventListener('keydown', (event) => {
+  if (document.getElementById('screen-player').classList.contains('hidden')) return;
+  if (event.key === 'ArrowDown') { event.preventDefault(); slideTo(1); }
+  if (event.key === 'ArrowUp') { event.preventDefault(); slideTo(-1); }
+  if (event.key === 'Escape') toggleSheet(false);
+});
 
 function currentItem() {
   return state.today?.items?.[state.index] || null;
@@ -544,6 +600,12 @@ function openPlayer(index) {
   document.getElementById('player-meta').textContent =
     `${fmtTime((item.duration_ms || 0) / 1000)}${item.level ? ' · ' + item.level : ''}`;
   document.getElementById('repair-btn').classList.add('hidden');
+
+  // 顶部 HUD
+  document.getElementById('hud-name').textContent = item.title;
+  document.getElementById('hud-progress').textContent =
+    `${index + 1} / ${items.length}${item.completed ? ' · 已完成' : ''}`;
+  toggleSheet(false);
 
   audio.pause();
   video.pause();
@@ -668,10 +730,12 @@ setInterval(() => {
   el.addEventListener('play', () => {
     if (el !== activeEl()) return;
     document.getElementById('btn-play').textContent = '❚❚';
+    document.getElementById('screen-player').classList.remove('paused');
   });
   el.addEventListener('pause', () => {
     if (el !== activeEl()) return;
     document.getElementById('btn-play').textContent = '▶';
+    document.getElementById('screen-player').classList.add('paused');
   });
   el.addEventListener('ended', async () => {
     if (el !== activeEl()) return;

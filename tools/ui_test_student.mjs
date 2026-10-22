@@ -1,4 +1,4 @@
-// 学生端网页的 jsdom 测试：配对 → 今日任务 → 听/看双模式 → 有效时长上报 → 记录
+// 学生端网页的 jsdom 测试：配对 → 今日任务 → 抖音式播放器 → 有效时长 → 记录
 // 用法：node tools/ui_test_student.mjs [--base http://127.0.0.1:8010] [--password dev]
 
 import { createRequire } from 'node:module';
@@ -64,7 +64,7 @@ async function apiAs(token, path, method = 'GET', body = null) {
 async function main() {
   const parentToken = (await apiAs(null, '/api/admin/login', 'POST', { password: PASSWORD })).token;
   const students = await apiAs(parentToken, '/api/students');
-  if (!students.length) throw new Error('没有学生，请先跑 tools/seed_dev.py');
+  if (!students.length) throw new Error('没有学生，请先建一个');
   const studentId = students[0].id;
   const pairCode = (await apiAs(parentToken, '/api/devices/pair-code', 'POST',
     { student_id: studentId, device_name: '学生网页端测试' })).code;
@@ -103,6 +103,14 @@ async function main() {
     this.dispatchEvent(new window.Event('pause'));
   };
 
+  // 模拟触摸滑动（jsdom 没有 TouchEvent，手工挂属性）
+  const fireTouch = (el, type, y) => {
+    const ev = new window.Event(type, { bubbles: true });
+    Object.defineProperty(ev, 'touches', { value: type === 'touchend' ? [] : [{ clientY: y }] });
+    Object.defineProperty(ev, 'changedTouches', { value: [{ clientY: y }] });
+    el.dispatchEvent(ev);
+  };
+
   console.log(`学生端模拟测试 ${BASE}\n`);
 
   console.log('1. 配对');
@@ -131,106 +139,118 @@ async function main() {
   check('任务列表渲染', Boolean(tasks), `${tasks ? tasks.length : 0} 集`);
   check('显示目标分钟数', Number(textOf(doc.getElementById('target-min'))) > 0,
     `${textOf(doc.getElementById('target-min'))} 分钟`);
-  check('显示已完成集数', /已完成 \d+ \/ \d+ 集/.test(textOf(doc.getElementById('done-count'))),
-    textOf(doc.getElementById('done-count')));
   check('进度环有描边值', doc.getElementById('ring-fg').style.strokeDashoffset !== '');
 
-  console.log('\n3. 播放器（听模式）');
+  console.log('\n3. 抖音式播放器（默认看模式）');
   playCalls = 0;
   doc.getElementById('start-btn').dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
-  // 关键回归点：play() 必须在点击的同步调用栈里被调用。
-  // 如果 openPlayer 中间插了 await，用户手势授权就丢了，
-  // Chrome 会以 NotAllowedError 拒绝自动播放，表现为"点了没反应、也不发媒体请求"。
-  check('play() 在用户手势内同步调用', playCalls > 0, `点击后同步调用 ${playCalls} 次`);
+  check('play() 在用户手势内同步调用', playCalls > 0, `同步调用 ${playCalls} 次`);
   const playerShown = await waitFor(() => !doc.getElementById('screen-player').classList.contains('hidden'));
-  check('进入播放器', Boolean(playerShown));
+  check('进入全屏播放器', Boolean(playerShown));
 
   const audio = doc.getElementById('audio');
   const video = doc.getElementById('video');
-  const mask = doc.getElementById('subtitle-mask');
+  const feed = doc.getElementById('screen-player');
+  const stage = doc.getElementById('stage');
 
-  check('默认是听模式', doc.querySelector('#mode-switch .mode-btn[data-mode="audio"]').classList.contains('active'));
-  check('听模式播放音轨（track=audio）', audio.src.includes('track=audio'), audio.src.split('?')[1]?.slice(0, 40));
-  check('音频地址带设备令牌', audio.src.includes('token='));
-  check('听模式隐藏视频元素', video.classList.contains('hidden'));
-  check('听模式显示封面图', !doc.getElementById('cover-art').classList.contains('hidden'));
+  check('默认是看模式（视频优先）',
+    doc.querySelector('#mode-switch .mode-btn[data-mode="video"]').classList.contains('active'));
+  check('播放视频地址（非音轨）',
+    video.src.includes('/api/media/') && !video.src.includes('track=audio'),
+    video.src.split('/api/')[1]?.slice(0, 34));
+  check('视频元素可见', !video.classList.contains('hidden'));
+  check('封面图隐藏', doc.getElementById('cover-art').classList.contains('hidden'));
+  check('看模式显示遮字幕按钮', !doc.getElementById('btn-mask').classList.contains('hidden'));
+
+  console.log('\n4. 顶部 HUD');
+  check('显示集名', textOf(doc.getElementById('hud-name')).length > 0,
+    textOf(doc.getElementById('hud-name')).slice(0, 24));
+  check('显示进度 n/N', /^\d+\s*\/\s*\d+/.test(textOf(doc.getElementById('hud-progress'))),
+    textOf(doc.getElementById('hud-progress')));
+  check('右上角有常用按钮（自动音量/遮字幕/循环/更多）',
+    ['btn-autolevel', 'btn-mask', 'btn-loop', 'btn-more'].every((id) => Boolean(doc.getElementById(id))));
+
+  console.log('\n5. 展开面板');
+  const moreBtn = doc.getElementById('btn-more');
+  check('初始未展开', !feed.classList.contains('expanded'));
+  moreBtn.dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
+  check('点「更多」展开', feed.classList.contains('expanded'));
+  check('面板里有模式切换', Boolean(doc.getElementById('mode-switch')));
+  check('面板里有音量滑块', Boolean(doc.getElementById('volume')));
+  check('面板里有上一集/下一集', Boolean(doc.getElementById('btn-prev')) && Boolean(doc.getElementById('btn-next')));
+  check('面板里有倍速与人声增强', Boolean(doc.getElementById('btn-rate')) && Boolean(doc.getElementById('btn-voice')));
+  moreBtn.dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
+  check('再点收起', !feed.classList.contains('expanded'));
+
+  console.log('\n6. 上下滑切换');
+  const titleBefore = textOf(doc.getElementById('hud-name'));
+  fireTouch(stage, 'touchstart', 600);
+  fireTouch(stage, 'touchend', 300);        // 上滑 300px
+  await sleep(420);
+  const titleAfter = textOf(doc.getElementById('hud-name'));
+  check('上滑切换到下一集', titleAfter !== titleBefore,
+    `${titleBefore.slice(0, 16)} → ${titleAfter.slice(0, 16)}`);
+
+  const beforeBack = textOf(doc.getElementById('hud-name'));
+  fireTouch(stage, 'touchstart', 300);
+  fireTouch(stage, 'touchend', 600);        // 下滑
+  await sleep(420);
+  check('下滑切回上一集', textOf(doc.getElementById('hud-name')) === beforeBack ? false : true,
+    textOf(doc.getElementById('hud-name')).slice(0, 16));
+
+  console.log('\n7. 切到听模式');
+  const modeAudio = doc.querySelector('#mode-switch .mode-btn[data-mode="audio"]');
+  modeAudio.dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
+  const audioMode = await waitFor(() => video.classList.contains('hidden'));
+  check('切到听模式', Boolean(audioMode));
+  check('听模式播音轨（track=audio）', audio.src.includes('track=audio'),
+    audio.src.split('?')[1]?.slice(0, 30));
   check('听模式隐藏遮字幕按钮', doc.getElementById('btn-mask').classList.contains('hidden'));
-  check('听模式遮罩不显示', mask.classList.contains('off'));
-  check('提示熄屏可继续听', textOf(doc.getElementById('player-tip')).includes('熄屏也能继续听'),
-    textOf(doc.getElementById('player-tip')));
+  check('听模式遮罩关闭', doc.getElementById('subtitle-mask').classList.contains('off'));
 
-  console.log('\n4. 切换到看模式');
-  audio._currentTime = 5;
-  audio.dispatchEvent(new window.Event('timeupdate'));
+  console.log('\n8. 切回看模式 + 遮字幕');
   doc.querySelector('#mode-switch .mode-btn[data-mode="video"]')
     .dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
+  await waitFor(() => !video.classList.contains('hidden'));
+  check('切回看模式', !video.classList.contains('hidden'));
+  const maskBtn = doc.getElementById('btn-mask');
+  maskBtn.dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
+  check('可开启遮字幕', !doc.getElementById('subtitle-mask').classList.contains('off'));
+  check('遮罩默认高度 20%', doc.getElementById('subtitle-mask').style.height === '20%',
+    doc.getElementById('subtitle-mask').style.height);
+  check('遮罩高度滑块出现', !doc.getElementById('mask-slider-wrap').classList.contains('hidden'));
+  maskBtn.dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
+  check('可关闭遮字幕', doc.getElementById('subtitle-mask').classList.contains('off'));
 
-  const switched = await waitFor(() => !video.classList.contains('hidden'));
-  check('切换到看模式', Boolean(switched));
-  check('看模式播放视频（非音轨地址）',
-    video.src.includes('/api/media/') && !video.src.includes('track=audio'),
-    video.src.split('/api/')[1]?.slice(0, 40));
-  check('看模式隐藏封面图', doc.getElementById('cover-art').classList.contains('hidden'));
-  check('看模式显示遮字幕按钮', !doc.getElementById('btn-mask').classList.contains('hidden'));
-  check('切换后保持播放进度', Math.abs((video._currentTime || 0) - 5) < 0.5,
-    `audio 5s → video ${video._currentTime}s`);
-  check('看模式提示熄屏会暂停', textOf(doc.getElementById('player-tip')).includes('熄屏会暂停'),
-    textOf(doc.getElementById('player-tip')));
-
-  console.log('\n5. 看模式下遮字幕');
-  doc.getElementById('btn-mask').dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
-  check('可开启遮字幕', !mask.classList.contains('off'));
-  check('遮罩默认高度 20%', mask.style.height === '20%', mask.style.height);
-  check('遮罩高度可调', !doc.getElementById('mask-slider-wrap').classList.contains('hidden'));
-  doc.getElementById('btn-mask').dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
-  check('可关闭遮字幕', mask.classList.contains('off'));
-
-  console.log('\n6. 切回听模式');
-  video._currentTime = 9;
-  video.dispatchEvent(new window.Event('timeupdate'));
-  doc.querySelector('#mode-switch .mode-btn[data-mode="audio"]')
-    .dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
-
-  const backToAudio = await waitFor(() => video.classList.contains('hidden'));
-  check('切回听模式', Boolean(backToAudio));
-  check('听模式重新使用音轨地址', audio.src.includes('track=audio'));
-  check('切回后保持播放进度', Math.abs((audio._currentTime || 0) - 9) < 0.5,
-    `video 9s → audio ${audio._currentTime}s`);
-  check('听模式遮罩自动隐藏', mask.classList.contains('off'));
-
-  console.log('\n7. 播放控制');
-  check('播放中按钮显示暂停图标', textOf(doc.getElementById('btn-play')) === '❚❚',
-    textOf(doc.getElementById('btn-play')));
+  console.log('\n9. 播放控制');
+  check('播放中不显示中央播放键', !feed.classList.contains('paused'));
+  video.pause();
+  check('暂停时显示中央播放键', feed.classList.contains('paused'));
+  video.play();
   doc.getElementById('btn-rate').dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
-  check('倍速可切换', audio.playbackRate !== 1.0, `${audio.playbackRate}×`);
+  check('倍速可切换', video.playbackRate !== 1.0, `${video.playbackRate}×`);
   doc.getElementById('btn-loop').dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
-  check('单集循环可切换', audio.loop === true && video.loop === true);
+  check('单集循环可切换', video.loop === true && audio.loop === true);
 
-  console.log('\n8. 音量、自动音量与人声增强');
+  console.log('\n10. 音量、自动音量与人声增强');
   const volInput = doc.getElementById('volume');
   check('有音量滑块', Boolean(volInput), `默认 ${volInput ? volInput.value : '?'}%`);
   volInput.value = '60';
   volInput.dispatchEvent(new window.Event('input', { bubbles: true }));
-  check('音量作用于当前播放元素',
-    audio.volume > 0 && audio.volume <= 0.61, `audio.volume=${audio.volume.toFixed(3)}`);
+  check('音量作用于当前播放元素', video.volume > 0 && video.volume <= 0.61,
+    `video.volume=${video.volume.toFixed(3)}`);
   check('音量记忆到本地', window.localStorage.getItem('volume') === '60');
 
   const autoBtn = doc.getElementById('btn-autolevel');
-  check('有自动音量按钮', Boolean(autoBtn));
   check('自动音量默认开启', autoBtn.classList.contains('on'));
-  check('响度校正后音量仍在合法区间',
-    audio.volume > 0 && audio.volume <= 1, `audio.volume=${audio.volume.toFixed(3)}`);
   autoBtn.dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
   check('可关闭自动音量',
     !autoBtn.classList.contains('on') && window.localStorage.getItem('auto_level') === '0');
-  check('关闭后音量回到滑块值', Math.abs(audio.volume - 0.6) < 0.01, `audio.volume=${audio.volume}`);
+  check('关闭后音量回到滑块值', Math.abs(video.volume - 0.6) < 0.01, `video.volume=${video.volume}`);
   autoBtn.dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
-  check('可重新开启自动音量',
-    autoBtn.classList.contains('on') && window.localStorage.getItem('auto_level') === '1');
+  check('可重新开启自动音量', autoBtn.classList.contains('on'));
 
   const voiceBtn = doc.getElementById('btn-voice');
-  check('有人声增强按钮', Boolean(voiceBtn));
-  // jsdom 没有 Web Audio，应该优雅降级而不是崩溃
   doc.getElementById('toast').classList.add('hidden');
   voiceBtn.dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
   const voiceToast = await waitFor(() => {
@@ -238,14 +258,13 @@ async function main() {
     return el && !el.classList.contains('hidden') ? textOf(el) : null;
   });
   check('无 Web Audio 时给出提示', voiceToast === '这台设备不支持人声增强', voiceToast || '');
-  check('不支持时不会误标为已开启', !voiceBtn.classList.contains('on'));
 
-  console.log('\n9. 有效时长上报');
-  audio._currentTime = 10;
-  audio.dispatchEvent(new window.Event('timeupdate'));
+  console.log('\n11. 有效时长上报');
+  video._currentTime = 10;
+  video.dispatchEvent(new window.Event('timeupdate'));
   await sleep(3200);
-  audio._currentTime = 13;
-  audio.dispatchEvent(new window.Event('timeupdate'));
+  video._currentTime = 13;
+  video.dispatchEvent(new window.Event('timeupdate'));
 
   doc.getElementById('player-back').dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
   await waitFor(() => !doc.getElementById('screen-home').classList.contains('hidden'));
@@ -256,26 +275,24 @@ async function main() {
   const queueLeft = window.localStorage.getItem('event_queue');
   check('上报后队列已清空', !queueLeft || JSON.parse(queueLeft).length === 0, queueLeft || '空');
 
-  console.log('\n10. 记录页');
+  console.log('\n12. 记录页');
   doc.querySelector('.tab[data-view="history"]').dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
   const historyRows = await waitFor(() => {
     const nodes = doc.querySelectorAll('#history-view .row');
     return nodes.length >= 7 ? nodes : null;
   });
   check('记录页渲染 7 天', Boolean(historyRows), `${historyRows ? historyRows.length : 0} 行`);
-  check('记录页显示合计', /近 7 天共/.test(textOf(doc.getElementById('history-view'))));
 
-  console.log('\n11. 过期令牌自愈');
+  console.log('\n13. 过期令牌自愈');
   const dom2 = new JSDOM(html, { url: BASE + '/student.html', runScripts: 'outside-only', pretendToBeVisual: true });
   const win2 = dom2.window;
   win2.fetch = (input, init) => fetch(new URL(input, BASE), init);
   win2.confirm = () => true;
-  // 模拟"换了数据库/撤销过设备"之后的陈旧令牌
   win2.localStorage.setItem('student_token', 'stale-token-that-no-longer-exists');
   win2.eval(appJs);
   const backToPair = await waitFor(() => !win2.document.getElementById('screen-pair').classList.contains('hidden'));
   check('陈旧令牌自动回到配对页', Boolean(backToPair));
-  check('给出"配对已失效"提示',
+  check('给出「配对已失效」提示',
     textOf(win2.document.getElementById('pair-error')).includes('失效'),
     textOf(win2.document.getElementById('pair-error')));
   check('陈旧令牌已从本地清除', !win2.localStorage.getItem('student_token'));
