@@ -295,12 +295,21 @@ function applyVolume() {
   video.volume = value / 100;
   volumeInput.value = String(value);
   volumeValue.textContent = `${value}%`;
-  // 儿童听力保护：满音量给个提示
-  if (value >= 100) {
-    document.getElementById('volume-tip').textContent = '已到最大音量，建议 80% 以内保护听力';
-  } else if (!state.voiceBoost) {
-    document.getElementById('volume-tip').textContent = '';
+  updateVolumeTip();
+}
+
+/** 提示行优先级：自动音量修正 > 听力保护提醒 > 空 */
+function updateVolumeTip() {
+  const tip = document.getElementById('volume-tip');
+  if (dsp.enabled && Math.abs(dsp.gainDb) >= 0.8) {
+    tip.textContent = `自动音量 ${dsp.gainDb > 0 ? '+' : ''}${dsp.gainDb.toFixed(1)} dB`;
+    return;
   }
+  if (state.volume >= 100) {
+    tip.textContent = '已到最大音量，建议 80% 以内保护听力';
+    return;
+  }
+  tip.textContent = '';
 }
 
 volumeInput.addEventListener('input', (event) => {
@@ -309,65 +318,173 @@ volumeInput.addEventListener('input', (event) => {
   applyVolume();
 });
 
-/* ------------------------------------------------------------ 人声增强 */
+/* ------------------------------------------------------------ 音频处理链 */
 
-// 用 Web Audio 的压缩器压低音乐、抬升对白。
-// 注意：MediaElementSource 一旦连上就没法完全拆回直连，所以关闭时把参数调中性。
-let audioCtx = null;
-let compressor = null;
-let boostGain = null;
+// 一条 Web Audio 链同时干两件事：
+//   source → gain(自动音量) → compressor(人声增强) → destination
+//                                 └→ analyser（测量实际输出）
+// 自动音量 = 实时 AGC：每 200ms 量一次 RMS，慢慢把音量拉到同一目标，
+// 所以不同来源、不同响度的素材播出来听感一致。
 
-function setupVoiceBoost() {
-  if (audioCtx) return true;
-  const Ctx = window.AudioContext || window.webkitAudioContext;
-  if (!Ctx) return false;
+const AUTO_LEVEL_TARGET_DB = -22;   // 目标 RMS（dBFS），对白大约落在这个量级
+const AUTO_LEVEL_MAX_DB = 18;       // 最大修正幅度
+const AUTO_LEVEL_GATE_DB = -55;     // 低于这个视为静音/噪声，不动增益
+
+const dsp = {
+  enabled: localStorage.getItem('auto_level') !== '0',   // 默认开启
+  ctx: null,
+  graphs: new Map(),
+  gainDb: 0,
+};
+
+function dspAvailable() {
+  return Boolean(window.AudioContext || window.webkitAudioContext);
+}
+
+/** 给某个媒体元素建处理链（每个元素只能建一次，之后复用）。 */
+function dspGraph(el) {
+  if (!dspAvailable()) return null;
+  let graph = dsp.graphs.get(el);
+  if (graph) return graph;
+
   try {
-    audioCtx = new Ctx();
-    const source = audioCtx.createMediaElementSource(audio);
-    compressor = audioCtx.createDynamicsCompressor();
-    boostGain = audioCtx.createGain();
-    source.connect(compressor);
-    compressor.connect(boostGain);
-    boostGain.connect(audioCtx.destination);
-    return true;
+    if (!dsp.ctx) dsp.ctx = new (window.AudioContext || window.webkitAudioContext)();
+    const source = dsp.ctx.createMediaElementSource(el);
+    const gain = dsp.ctx.createGain();
+    const compressor = dsp.ctx.createDynamicsCompressor();
+    const analyser = dsp.ctx.createAnalyser();
+    analyser.fftSize = 2048;
+
+    source.connect(gain);
+    gain.connect(compressor);
+    compressor.connect(analyser);
+    compressor.connect(dsp.ctx.destination);
+
+    graph = { gain, compressor, analyser, buf: new Float32Array(analyser.fftSize) };
+    dsp.graphs.set(el, graph);
+    applyVoiceBoost();
+    return graph;
   } catch (err) {
     console.warn('Web Audio 初始化失败', err);
-    audioCtx = null;
-    return false;
+    return null;
   }
 }
 
+/** 按需建链：只有开了自动音量或人声增强才走 Web Audio。 */
+function dspMaybeInit() {
+  if (!dsp.enabled && !state.voiceBoost) return null;
+  const graph = dspGraph(activeEl());
+  if (graph && dsp.ctx && dsp.ctx.state === 'suspended') {
+    dsp.ctx.resume().catch(() => {});
+  }
+  return graph;
+}
+
+function dspResetGain() {
+  dsp.gainDb = 0;
+  dsp.graphs.forEach((graph) => {
+    graph.gain.gain.setTargetAtTime(1, dsp.ctx ? dsp.ctx.currentTime : 0, 0.05);
+  });
+}
+
+function autoLevelTick() {
+  if (!dsp.enabled) return;
+  const el = activeEl();
+  const graph = dsp.graphs.get(el);
+  if (!graph || el.paused || el.seeking) return;
+
+  graph.analyser.getFloatTimeDomainData(graph.buf);
+  let sum = 0;
+  for (let i = 0; i < graph.buf.length; i += 1) {
+    sum += graph.buf[i] * graph.buf[i];
+  }
+  const rms = Math.sqrt(sum / graph.buf.length);
+  const db = 20 * Math.log10(rms + 1e-9);
+  if (db < AUTO_LEVEL_GATE_DB) return;      // 静音段别乱拉增益
+
+  const wanted = Math.max(-AUTO_LEVEL_MAX_DB,
+    Math.min(AUTO_LEVEL_MAX_DB, AUTO_LEVEL_TARGET_DB - db));
+  const currentDb = 20 * Math.log10(graph.gain.gain.value + 1e-9);
+  // 慢慢靠近，避免忽大忽小
+  const nextDb = currentDb + (wanted - currentDb) * 0.3;
+  dsp.gainDb = nextDb;
+  graph.gain.gain.setTargetAtTime(Math.pow(10, nextDb / 20), dsp.ctx.currentTime, 0.25);
+
+  const tip = document.getElementById('volume-tip');
+  if (Math.abs(nextDb) >= 0.8) {
+    tip.textContent = `自动音量 ${nextDb > 0 ? '+' : ''}${nextDb.toFixed(1)} dB`;
+  } else if (state.volume >= 100) {
+    tip.textContent = '已到最大音量，建议 80% 以内保护听力';
+  } else {
+    tip.textContent = '';
+  }
+}
+
+setInterval(autoLevelTick, 200);
+
+function updateAutoLevelButton() {
+  document.getElementById('btn-autolevel').classList.toggle('on', dsp.enabled);
+}
+
+document.getElementById('btn-autolevel').addEventListener('click', () => {
+  dsp.enabled = !dsp.enabled;
+  localStorage.setItem('auto_level', dsp.enabled ? '1' : '0');
+  updateAutoLevelButton();
+
+  if (dsp.enabled) {
+    if (!dspAvailable()) {
+      toast('这台设备不支持自动音量');
+      dsp.enabled = false;
+      localStorage.setItem('auto_level', '0');
+      updateAutoLevelButton();
+      return;
+    }
+    dspMaybeInit();
+    toast('自动音量已开：每集会拉到相近响度');
+  } else {
+    dspResetGain();
+    toast('自动音量已关：音量取决于素材本身');
+  }
+});
+
+/* ------------------------------------------------------------ 人声增强 */
+
 function applyVoiceBoost() {
   const button = document.getElementById('btn-voice');
-  if (!compressor || !boostGain) return;
-
-  if (state.voiceBoost) {
-    compressor.threshold.value = -24;
-    compressor.knee.value = 12;
-    compressor.ratio.value = 4;
-    compressor.attack.value = 0.003;
-    compressor.release.value = 0.25;
-    boostGain.gain.value = 1.35;
-    button.classList.add('on');
-  } else {
-    compressor.threshold.value = 0;
-    compressor.knee.value = 0;
-    compressor.ratio.value = 1;
-    boostGain.gain.value = 1;
-    button.classList.remove('on');
-  }
+  dsp.graphs.forEach((graph) => {
+    const { compressor, gain } = graph;
+    if (state.voiceBoost) {
+      compressor.threshold.value = -24;
+      compressor.knee.value = 12;
+      compressor.ratio.value = 4;
+      compressor.attack.value = 0.003;
+      compressor.release.value = 0.25;
+      gain.gain.value = Math.max(gain.gain.value, 1);
+    } else {
+      compressor.threshold.value = 0;
+      compressor.knee.value = 0;
+      compressor.ratio.value = 1;
+    }
+  });
+  button.classList.toggle('on', state.voiceBoost);
 }
 
 document.getElementById('btn-voice').addEventListener('click', async () => {
   if (!state.voiceBoost) {
-    if (!setupVoiceBoost()) {
+    if (!dspAvailable()) {
       toast('这台设备不支持人声增强');
       return;
     }
-    if (audioCtx.state === 'suspended') {
-      try { await audioCtx.resume(); } catch (err) { /* 忽略 */ }
-    }
     state.voiceBoost = true;
+    const graph = dspGraph(activeEl());
+    if (!graph) {
+      state.voiceBoost = false;
+      toast('这台设备不支持人声增强');
+      return;
+    }
+    if (dsp.ctx && dsp.ctx.state === 'suspended') {
+      try { await dsp.ctx.resume(); } catch (err) { /* 忽略 */ }
+    }
     applyVoiceBoost();
     document.getElementById('volume-tip').textContent = '人声增强已开，可能影响熄屏后台播放';
     toast('已开启人声增强');
@@ -459,6 +576,8 @@ function openPlayer(index) {
   showScreen('player');
   resetSession(item.video_id);
   updateSeek();
+  dspResetGain();          // 新的一集从 0 dB 开始，让 AGC 重新收敛
+  dspMaybeInit();
 
   // 同步开播，保住用户手势
   const played = el.play();
@@ -498,6 +617,7 @@ async function switchMode(mode) {
   el.playbackRate = state.rate;
   el.loop = state.loop;
   renderMode();
+  dspMaybeInit();
 
   const resume = () => {
     try {
@@ -721,6 +841,7 @@ document.getElementById('repair-btn').addEventListener('click', () => {
 
 (async function boot() {
   applyVolume();
+  updateAutoLevelButton();
   renderMode();
   if (!state.token) {
     showScreen('pair');
