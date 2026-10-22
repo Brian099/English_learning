@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="theme-color" content="#3d6bfa">
 <title>听英语 · 学生端</title>
-<link rel="stylesheet" href="/student.css?v=4">
+<link rel="stylesheet" href="/student.css?v=8">
 </head>
 <body>
 
@@ -94,12 +94,20 @@
   <div class="extras">
     <button id="btn-loop" class="chip">🔁 单集循环</button>
     <button id="btn-rate" class="chip">1.0×</button>
+    <button id="btn-voice" class="chip">🎚 人声增强</button>
     <button id="btn-mask" class="chip hidden">🙈 遮字幕</button>
     <label class="chip mask-slider hidden" id="mask-slider-wrap">
       高度 <input type="range" id="mask-height" min="8" max="40" step="2" value="20">
       <span id="mask-value">20%</span>
     </label>
   </div>
+
+  <div class="volume-row">
+    <span class="vol-icon">🔈</span>
+    <input type="range" id="volume" min="0" max="100" step="5" value="100">
+    <span class="vol-value" id="volume-value">100%</span>
+  </div>
+  <p class="tip" id="volume-tip"></p>
 
   <p class="tip" id="player-tip">熄屏也能继续听哦</p>
   <button id="repair-btn" class="chip hidden" style="margin:0 auto;display:block">🔗 配对已失效，点这里重新配对</button>
@@ -110,6 +118,6 @@
 </section>
 
 <div id="toast" class="toast hidden"></div>
-<script src="/student.js?v=4"></script>
+<script src="/student.js?v=8"></script>
 </body>
 </html>

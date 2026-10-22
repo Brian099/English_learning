@@ -206,7 +206,28 @@ async function main() {
   doc.getElementById('btn-loop').dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
   check('单集循环可切换', audio.loop === true && video.loop === true);
 
-  console.log('\n8. 有效时长上报');
+  console.log('\n8. 音量与人声增强');
+  const volInput = doc.getElementById('volume');
+  check('有音量滑块', Boolean(volInput), `默认 ${volInput ? volInput.value : '?'}%`);
+  volInput.value = '60';
+  volInput.dispatchEvent(new window.Event('input', { bubbles: true }));
+  check('音量作用于音频元素', Math.abs(audio.volume - 0.6) < 0.01, `audio.volume=${audio.volume}`);
+  check('音量同时作用于视频元素', Math.abs(video.volume - 0.6) < 0.01, `video.volume=${video.volume}`);
+  check('音量记忆到本地', window.localStorage.getItem('volume') === '60');
+
+  const voiceBtn = doc.getElementById('btn-voice');
+  check('有人声增强按钮', Boolean(voiceBtn));
+  // jsdom 没有 Web Audio，应该优雅降级而不是崩溃
+  doc.getElementById('toast').classList.add('hidden');
+  voiceBtn.dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
+  const voiceToast = await waitFor(() => {
+    const el = doc.getElementById('toast');
+    return el && !el.classList.contains('hidden') ? textOf(el) : null;
+  });
+  check('无 Web Audio 时给出提示', voiceToast === '这台设备不支持人声增强', voiceToast || '');
+  check('不支持时不会误标为已开启', !voiceBtn.classList.contains('on'));
+
+  console.log('\n9. 有效时长上报');
   audio._currentTime = 10;
   audio.dispatchEvent(new window.Event('timeupdate'));
   await sleep(3200);
@@ -222,7 +243,7 @@ async function main() {
   const queueLeft = window.localStorage.getItem('event_queue');
   check('上报后队列已清空', !queueLeft || JSON.parse(queueLeft).length === 0, queueLeft || '空');
 
-  console.log('\n9. 记录页');
+  console.log('\n10. 记录页');
   doc.querySelector('.tab[data-view="history"]').dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
   const historyRows = await waitFor(() => {
     const nodes = doc.querySelectorAll('#history-view .row');
@@ -231,7 +252,7 @@ async function main() {
   check('记录页渲染 7 天', Boolean(historyRows), `${historyRows ? historyRows.length : 0} 行`);
   check('记录页显示合计', /近 7 天共/.test(textOf(doc.getElementById('history-view'))));
 
-  console.log('\n10. 过期令牌自愈');
+  console.log('\n11. 过期令牌自愈');
   const dom2 = new JSDOM(html, { url: BASE + '/student.html', runScripts: 'outside-only', pretendToBeVisual: true });
   const win2 = dom2.window;
   win2.fetch = (input, init) => fetch(new URL(input, BASE), init);

@@ -10,6 +10,8 @@ const state = {
   loop: false,
   rate: 1.0,
   mode: localStorage.getItem('player_mode') || 'audio',   // audio | video
+  volume: Number(localStorage.getItem('volume') ?? 100),   // 0-100
+  voiceBoost: false,                                        // 人声增强（Web Audio）
   maskOn: localStorage.getItem('mask_on') === '1',          // 默认不遮，家长可开
   maskHeight: Number(localStorage.getItem('mask_height') || 20),
   session: null,
@@ -282,6 +284,101 @@ document.getElementById('btn-mask').addEventListener('click', () => {
   applyMask();
 });
 
+/* ------------------------------------------------------------ 音量 */
+
+const volumeInput = document.getElementById('volume');
+const volumeValue = document.getElementById('volume-value');
+
+function applyVolume() {
+  const value = Math.max(0, Math.min(100, state.volume));
+  audio.volume = value / 100;
+  video.volume = value / 100;
+  volumeInput.value = String(value);
+  volumeValue.textContent = `${value}%`;
+  // 儿童听力保护：满音量给个提示
+  if (value >= 100) {
+    document.getElementById('volume-tip').textContent = '已到最大音量，建议 80% 以内保护听力';
+  } else if (!state.voiceBoost) {
+    document.getElementById('volume-tip').textContent = '';
+  }
+}
+
+volumeInput.addEventListener('input', (event) => {
+  state.volume = Number(event.target.value);
+  localStorage.setItem('volume', String(state.volume));
+  applyVolume();
+});
+
+/* ------------------------------------------------------------ 人声增强 */
+
+// 用 Web Audio 的压缩器压低音乐、抬升对白。
+// 注意：MediaElementSource 一旦连上就没法完全拆回直连，所以关闭时把参数调中性。
+let audioCtx = null;
+let compressor = null;
+let boostGain = null;
+
+function setupVoiceBoost() {
+  if (audioCtx) return true;
+  const Ctx = window.AudioContext || window.webkitAudioContext;
+  if (!Ctx) return false;
+  try {
+    audioCtx = new Ctx();
+    const source = audioCtx.createMediaElementSource(audio);
+    compressor = audioCtx.createDynamicsCompressor();
+    boostGain = audioCtx.createGain();
+    source.connect(compressor);
+    compressor.connect(boostGain);
+    boostGain.connect(audioCtx.destination);
+    return true;
+  } catch (err) {
+    console.warn('Web Audio 初始化失败', err);
+    audioCtx = null;
+    return false;
+  }
+}
+
+function applyVoiceBoost() {
+  const button = document.getElementById('btn-voice');
+  if (!compressor || !boostGain) return;
+
+  if (state.voiceBoost) {
+    compressor.threshold.value = -24;
+    compressor.knee.value = 12;
+    compressor.ratio.value = 4;
+    compressor.attack.value = 0.003;
+    compressor.release.value = 0.25;
+    boostGain.gain.value = 1.35;
+    button.classList.add('on');
+  } else {
+    compressor.threshold.value = 0;
+    compressor.knee.value = 0;
+    compressor.ratio.value = 1;
+    boostGain.gain.value = 1;
+    button.classList.remove('on');
+  }
+}
+
+document.getElementById('btn-voice').addEventListener('click', async () => {
+  if (!state.voiceBoost) {
+    if (!setupVoiceBoost()) {
+      toast('这台设备不支持人声增强');
+      return;
+    }
+    if (audioCtx.state === 'suspended') {
+      try { await audioCtx.resume(); } catch (err) { /* 忽略 */ }
+    }
+    state.voiceBoost = true;
+    applyVoiceBoost();
+    document.getElementById('volume-tip').textContent = '人声增强已开，可能影响熄屏后台播放';
+    toast('已开启人声增强');
+  } else {
+    state.voiceBoost = false;
+    applyVoiceBoost();
+    applyVolume();
+    toast('已关闭人声增强');
+  }
+});
+
 document.getElementById('mask-height').addEventListener('input', (event) => {
   state.maskHeight = Number(event.target.value);
   localStorage.setItem('mask_height', String(state.maskHeight));
@@ -358,6 +455,7 @@ function openPlayer(index) {
   el.loop = state.loop;
 
   renderMode();
+  applyVolume();
   showScreen('player');
   resetSession(item.video_id);
   updateSeek();
@@ -622,6 +720,7 @@ document.getElementById('repair-btn').addEventListener('click', () => {
 /* ------------------------------------------------------------ 启动 */
 
 (async function boot() {
+  applyVolume();
   renderMode();
   if (!state.token) {
     showScreen('pair');
