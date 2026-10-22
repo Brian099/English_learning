@@ -52,6 +52,69 @@ def _quick_hash(path: Path, size: int) -> str:
     return h.hexdigest()[:32]
 
 
+def _iter_video_files(root: Path):
+    """遍历媒体目录，产出 (相对路径, 绝对路径, stat)。"""
+    for dirpath, _dirnames, filenames in os.walk(root):
+        for name in filenames:
+            path = Path(dirpath) / name
+            if path.suffix.lower() not in VIDEO_EXT:
+                continue
+            yield path.relative_to(root).as_posix(), path, path.stat()
+
+
+async def scan_preview(db: AsyncSession) -> dict:
+    """只检测，不写库：告诉你有多少文件、多少是新的、多少变了。
+
+    这一步不动数据库，也不会触发任何转码/转写。
+    """
+    root = Path(settings.media_root)
+    if not root.is_dir():
+        return {"error": f"媒体目录不存在: {root}", "total": 0,
+                "new": 0, "changed": 0, "unchanged": 0, "series": {}}
+
+    existing_rows = (
+        await db.execute(select(Video.rel_path, Video.size_bytes, Video.mtime, Video.duration_ms))
+    ).all()
+    index = {row.rel_path: row for row in existing_rows}
+
+    total = new = changed = unchanged = 0
+    series: dict[str, dict[str, int]] = {}
+    new_examples: list[str] = []
+
+    for rel, _path, stat in _iter_video_files(root):
+        total += 1
+        series_name = rel.split("/")[0] if "/" in rel else "未分类"
+        bucket = series.setdefault(series_name, {"total": 0, "new": 0, "changed": 0})
+        bucket["total"] += 1
+
+        row = index.get(rel)
+        if row is None:
+            new += 1
+            bucket["new"] += 1
+            if len(new_examples) < 8:
+                new_examples.append(rel)
+        elif (row.size_bytes != stat.st_size or row.mtime != int(stat.st_mtime)
+              or not row.duration_ms):
+            changed += 1
+            bucket["changed"] += 1
+        else:
+            unchanged += 1
+
+    pending = new + changed
+    return {
+        "media_root": str(root),
+        "total": total,
+        "new": new,
+        "changed": changed,
+        "unchanged": unchanged,
+        "pending": pending,
+        # 每集约 1–1.5 分钟（音量测量 + 抽音轨 + 转写）
+        "estimated_minutes": round(pending * 1.2, 1),
+        "series": series,
+        "new_examples": new_examples,
+    }
+
+
 async def scan_media(db: AsyncSession) -> dict:
     """增量扫描 MEDIA_ROOT：新增入库、变更更新、无变化跳过。"""
     root = Path(settings.media_root)

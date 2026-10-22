@@ -486,13 +486,15 @@ async function renderSettings() {
       <div class="card">
         <h2>内容维护</h2>
         <div class="row">
-          <button id="do-scan" class="ghost">扫描视频目录</button>
-          <button id="do-audio" class="ghost">入库处理（转音频+对白）</button>
-          <span class="muted" id="maintenance-status"></span>
+          <button id="do-scan">扫描视频目录</button>
+          <button id="do-import" class="hidden">导入并处理</button>
+          <button id="do-audio" class="ghost">补跑入库（失败重试）</button>
         </div>
+        <div id="scan-result" class="muted" style="margin-top:10px;line-height:1.7"></div>
+        <span class="muted" id="maintenance-status"></span>
         <p class="muted" style="margin:10px 0 0">
-          把视频拷进媒体目录后点「扫描视频目录」，系统会自动接着转音频、提取对白、算难度分级。
-          文件名请自己整理好（第一层文件夹名 = 系列名），程序不会改名。
+          扫描只做检测，不写库、不处理。确认数字后再点「导入并处理」。
+          文件名请自己整理（第一层文件夹名 = 系列名），程序不改名。
         </p>
       </div>
       <div class="card">
@@ -544,13 +546,32 @@ async function renderSettings() {
     });
 
     document.getElementById('do-scan').addEventListener('click', async () => {
-      toast('扫描中…');
+      const resultEl = document.getElementById('scan-result');
+      const importBtn = document.getElementById('do-import');
+      resultEl.textContent = '正在检测…';
+      importBtn.classList.add('hidden');
+      try {
+        const data = await api('/api/scan/preview', { method: 'POST' });
+        renderScanResult(data);
+      } catch (err) {
+        resultEl.textContent = err.message;
+      }
+    });
+
+    document.getElementById('do-import').addEventListener('click', async () => {
+      const resultEl = document.getElementById('scan-result');
+      const importBtn = document.getElementById('do-import');
       try {
         const result = await api('/api/scan', { method: 'POST' });
-        const parts = [`新增 ${result.added || 0}`, `更新 ${result.updated || 0}`];
-        toast(parts.join('，') + (result.ingest_started ? '，正在转音频和提取对白' : ''));
-        if (result.ingest_started) watchIngest();
-      } catch (err) { toast(err.message); }
+        toast(`已导入 新增 ${result.added || 0}，更新 ${result.updated || 0}` +
+              (result.ingest_started ? '，开始处理' : ''));
+        importBtn.classList.add('hidden');
+        resultEl.textContent = `已导入：新增 ${result.added || 0} · 更新 ${result.updated || 0}`;
+        if (result.ingest_started) watchIngest(result.ingest_count);
+        else await renderSettings();
+      } catch (err) {
+        toast(err.message);
+      }
     });
 
     document.getElementById('do-audio').addEventListener('click', startAudioExtraction);
@@ -564,7 +585,45 @@ function showModal(html) {
   document.getElementById('modal').classList.remove('hidden');
 }
 
-/* 入库处理：后台任务 + 轮询进度 */
+/* 扫描检测结果 */
+function renderScanResult(data) {
+  const el = document.getElementById('scan-result');
+  const importBtn = document.getElementById('do-import');
+
+  if (data.error) {
+    el.textContent = data.error;
+    importBtn.classList.add('hidden');
+    return;
+  }
+
+  const lines = [];
+  lines.push(`媒体目录：${esc(data.media_root)}`);
+  lines.push(`共 <b>${data.total}</b> 个视频文件：新增 <b>${data.new}</b> · ` +
+             `变化 <b>${data.changed}</b> · 未变 ${data.unchanged}`);
+
+  const series = Object.entries(data.series || {});
+  if (series.length) {
+    lines.push('按系列：' + series.map(([name, s]) => {
+      const extra = s.new || s.changed ? `（新 ${s.new}${s.changed ? ` / 变 ${s.changed}` : ''}）` : '';
+      return `${esc(name)} ${s.total}${extra}`;
+    }).join(' · '));
+  }
+
+  if (data.pending > 0) {
+    lines.push(`预计处理 <b>${data.pending}</b> 集，约 <b>${data.estimated_minutes}</b> 分钟`);
+    if (data.new_examples && data.new_examples.length) {
+      lines.push('新增示例：' + data.new_examples.map(esc).join('、'));
+    }
+    importBtn.textContent = `导入并处理 ${data.pending} 个`;
+    importBtn.classList.remove('hidden');
+  } else {
+    lines.push('没有新增或变化的文件，无需导入。');
+    importBtn.classList.add('hidden');
+  }
+
+  el.innerHTML = lines.join('<br>');
+}
+/* 补跑入库（失败重试）：后台任务 + 轮询进度 */
 async function startAudioExtraction() {
   try {
     const started = await api('/api/maintenance/ingest', { method: 'POST' });

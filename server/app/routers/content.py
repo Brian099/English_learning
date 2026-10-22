@@ -13,7 +13,7 @@ from ..config import settings
 from ..db import get_db
 from ..models import Series, Student, Video
 from ..pipeline import run_ingest
-from ..scan import scan_media
+from ..scan import scan_media, scan_preview
 from ..security import read_auth, require_parent
 
 router = APIRouter(prefix="/api", tags=["content"])
@@ -173,11 +173,21 @@ async def patch_video(
 
 # --------------------------------------------------------------------- scan
 
+@router.post("/scan/preview", dependencies=[Depends(require_parent)])
+async def scan_preview_endpoint(db: AsyncSession = Depends(get_db)) -> dict:
+    """只检测媒体目录，不写库、不触发处理。
+
+    返回：总文件数、新增、变化、未变，以及按系列的分布。
+    用户看到数字后再决定要不要导入。
+    """
+    return await scan_preview(db)
+
+
 @router.post("/scan", dependencies=[Depends(require_parent)])
 async def scan(background: BackgroundTasks, db: AsyncSession = Depends(get_db)) -> dict:
-    """扫描 MEDIA_ROOT 增量入库。
+    """真正导入：把新增/变化的文件写进库。
 
-    默认入库后自动接着跑"转音频 + 提取对白"（AUTO_INGEST=0 可关闭）。
+    默认导入后自动接着跑"转音频 + 提取对白"（AUTO_INGEST=0 可关闭）。
     """
     result = await scan_media(db)
     if settings.auto_ingest and result.get("ids"):
