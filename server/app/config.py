@@ -48,6 +48,9 @@ class Settings(BaseSettings):
     model_dir: str = "/models"
     # HuggingFace 镜像；国内直连 huggingface.co 基本不通
     hf_endpoint: str = "https://hf-mirror.com"
+    # 转写成功后是否保留 ASR 输入的 wav（32KB/s 不压缩，很占地方）
+    # 默认删除；要拿旧音频重转写时它会自动从视频重新抽，几秒钟的事
+    keep_asr_wav: bool = False
 
 
 settings = Settings()

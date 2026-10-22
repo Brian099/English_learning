@@ -41,6 +41,7 @@ _state: dict = {
     "done": 0,
     "failed": 0,
     "skipped": 0,
+    "cleaned": 0,
     "current": "",
     "started_at": None,
     "finished_at": None,
@@ -327,8 +328,8 @@ async def _ingest_one(db, video: Video) -> str:
 async def run_ingest(only_ids: list[int] | None = None) -> None:
     """后台任务入口：处理所有缺音轨或缺转写的视频。"""
     _state.update(running=True, stage="准备中", total=0, done=0, failed=0,
-                  skipped=0, current="", started_at=_now(), finished_at=None,
-                  last_error=None)
+                  skipped=0, cleaned=0, current="", started_at=_now(),
+                  finished_at=None, last_error=None)
     try:
         async with SessionLocal() as db:
             stmt = select(Video).order_by(Video.id)
@@ -352,10 +353,29 @@ async def run_ingest(only_ids: list[int] | None = None) -> None:
                     _state["failed"] += 1
                 else:
                     _state["done"] += 1
+                    # 落库成功后才删 ASR 输入（失败的那集留着，方便排查）
+                    _cleanup_asr_wav(video.id)
     except Exception as exc:
         _state["last_error"] = f"任务异常: {exc}"
     finally:
         _state.update(running=False, stage="", current="", finished_at=_now())
+
+
+def _cleanup_asr_wav(video_id: int) -> None:
+    """删掉 ASR 输入的 wav：转写已经入库，这份 32KB/s 的中间文件没用了。
+
+    删不掉只记 warning，不影响入库结果；需要重转写时会从视频重新抽。
+    """
+    if settings.keep_asr_wav:
+        return
+    wav = Path(settings.cache_root) / "asr" / f"{video_id}.wav"
+    if not wav.is_file():
+        return
+    try:
+        wav.unlink()
+        _state["cleaned"] += 1
+    except OSError as exc:
+        _state["last_error"] = f"删除 {wav.name} 失败: {exc}"
 
 
 async def pending_count() -> int:

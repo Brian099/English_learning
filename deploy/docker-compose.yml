@@ -18,6 +18,9 @@ services:
       NORMALIZE_AUDIO: "1"
       NORMALIZE_VIDEO: "0"
       TARGET_LUFS: "-16"
+      # 转写成功后删除 ASR 输入的 wav（32KB/s 不压缩，很占地方）
+      # 设成 1 可保留，调试用
+      KEEP_ASR_WAV: "0"
       WHISPER_MODEL: small.en
       WHISPER_THREADS: "3"
       # 家长端登录密码：建议改成自己的
