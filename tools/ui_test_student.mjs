@@ -270,6 +270,10 @@ async function main() {
   await waitFor(() => !doc.getElementById('screen-home').classList.contains('hidden'));
   await sleep(600);
 
+  check('返回列表后停止播放（音频）', audio.paused === true, `audio.paused=${audio.paused}`);
+  check('返回列表后停止播放（视频）', video.paused === true, `video.paused=${video.paused}`);
+  check('返回列表后收起展开面板', !feed.classList.contains('expanded'));
+
   const today = await apiAs(parentToken, `/api/report/${studentId}/today`);
   check('有效时长已计入今日报表', today.effective_min > 0, `${today.effective_min} 分钟`);
   const queueLeft = window.localStorage.getItem('event_queue');

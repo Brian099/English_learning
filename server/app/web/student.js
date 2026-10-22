@@ -87,7 +87,20 @@ async function tokenValid() {
   }
 }
 
+/** 停掉正在播放的媒体。离开播放器时必须调用，否则回到列表还在响。 */
+function stopPlayback() {
+  ['audio', 'video'].forEach((id) => {
+    const el = document.getElementById(id);
+    if (el && !el.paused) {
+      try { el.pause(); } catch (err) { /* 忽略 */ }
+    }
+  });
+  toggleSheet(false);
+}
+
 function showScreen(name) {
+  // 离开播放器就停播：返回列表、配对失效、换设备都走这里
+  if (name !== 'player') stopPlayback();
   ['pair', 'home', 'player'].forEach((screen) => {
     document.getElementById(`screen-${screen}`).classList.toggle('hidden', screen !== name);
   });
