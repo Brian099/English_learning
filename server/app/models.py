@@ -52,7 +52,8 @@ class Video(Base):
     speech_ms: Mapped[int] = mapped_column(Integer, default=0)   # 有语音的时长，完成判定的分母
     speech_pct: Mapped[float] = mapped_column(Float, default=0.0)
     wpm: Mapped[float] = mapped_column(Float, default=0.0)
-    lufs: Mapped[float | None] = mapped_column(Float)
+    lufs: Mapped[float | None] = mapped_column(Float)            # 原始文件响度（看模式用）
+    audio_lufs: Mapped[float | None] = mapped_column(Float)      # 归一化后音轨的实测响度（听模式用）
     width: Mapped[int] = mapped_column(Integer, default=0)
     height: Mapped[int] = mapped_column(Integer, default=0)
     audio_rel: Mapped[str | None] = mapped_column(String(1024))   # 仅音轨版本（磨耳朵）

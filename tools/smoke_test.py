@@ -151,6 +151,16 @@ def main() -> int:
     check("GET 计划回读", len(plan["items"]) == len(ids) and plan["target_min"] == 15)
     check("设备令牌可读计划", len(call(base, f"/api/plans/{student_id}/{day}", token=device_token)["items"]) == len(ids))
 
+    print("\n9b. 学生端响度数据")
+    today_payload = call(base, "/api/student/today", token=device_token)
+    items_with_lufs = [it for it in today_payload["items"]
+                       if "lufs" in it and "audio_lufs" in it]
+    check("学生端任务带响度字段", len(items_with_lufs) == len(today_payload["items"]),
+          f"{len(items_with_lufs)}/{len(today_payload['items'])} 集带 lufs/audio_lufs")
+    measured = [it["audio_lufs"] for it in today_payload["items"] if it.get("audio_lufs") is not None]
+    check("有已测量的归一化响度", len(measured) > 0,
+          f"{len(measured)} 集已测，范围 {min(measured):.1f}~{max(measured):.1f} LUFS" if measured else "无")
+
     print("\n10. 媒体播放地址")
     def fetch_media(path, token_value, extra_headers=None):
         req = urllib.request.Request(base + path)

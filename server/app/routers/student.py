@@ -96,6 +96,9 @@ async def student_today(
                     "level": video.level,
                     "kind": item.kind,
                     "order": item.order_index,
+                    # 响度：前端据此做静态音量校正
+                    "lufs": video.lufs,            # 原始文件（看模式）
+                    "audio_lufs": video.audio_lufs,  # 归一化后的音轨（听模式）
                 }
             )
     else:
@@ -115,6 +118,8 @@ async def student_today(
                     "level": video.level,
                     "kind": "new",
                     "order": len(items),
+                    "lufs": video.lufs,
+                    "audio_lufs": video.audio_lufs,
                 }
             )
 

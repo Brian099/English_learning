@@ -264,6 +264,15 @@ async def _ingest_one(db, video: Video) -> str:
         _state["last_error"] = f"{video.title} 抽音轨失败: {error}"
         return "failed"
 
+    # 2b) 量一下归一化后的实际响度，存库供播放端做静态校正
+    #     （归一化不是 100% 精确，实测有 ±1.5 dB 的残差；存下来让前端一次修正到位）
+    out_measured = await asyncio.to_thread(measure_loudness, audio_path)
+    if out_measured and out_measured.get("input_i"):
+        try:
+            video.audio_lufs = float(out_measured["input_i"])
+        except (TypeError, ValueError):
+            pass
+
     # 3) 看模式也归一化（可选，会额外占一份视频空间）
     if settings.normalize_video:
         ok, error = await asyncio.to_thread(ensure_normalized_video, src, video_path, af)

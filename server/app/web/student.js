@@ -291,18 +291,28 @@ const volumeValue = document.getElementById('volume-value');
 
 function applyVolume() {
   const value = Math.max(0, Math.min(100, state.volume));
-  audio.volume = value / 100;
-  video.volume = value / 100;
+  const base = value / 100;
+  const gain = levelGain(currentItem());
+  const el = activeEl();
+
+  // 衰减（gain<1）直接用元素音量解决，不需要 Web Audio；
+  // 放大（gain>1）才需要 Web Audio 的增益节点。
+  el.volume = base * Math.min(gain, 1);
+  const boosted = setDspGain(Math.max(gain, 1));
+  if (!boosted) el.volume = base;      // 需要放大但环境不支持，保持原音量
+
+  dsp.gainDb = 20 * Math.log10(gain);
+
   volumeInput.value = String(value);
   volumeValue.textContent = `${value}%`;
   updateVolumeTip();
 }
 
-/** 提示行优先级：自动音量修正 > 听力保护提醒 > 空 */
+/** 提示行优先级：响度校正 > 听力保护提醒 > 空 */
 function updateVolumeTip() {
   const tip = document.getElementById('volume-tip');
   if (dsp.enabled && Math.abs(dsp.gainDb) >= 0.8) {
-    tip.textContent = `自动音量 ${dsp.gainDb > 0 ? '+' : ''}${dsp.gainDb.toFixed(1)} dB`;
+    tip.textContent = `响度校正 ${dsp.gainDb > 0 ? '+' : ''}${dsp.gainDb.toFixed(1)} dB`;
     return;
   }
   if (state.volume >= 100) {
@@ -326,9 +336,8 @@ volumeInput.addEventListener('input', (event) => {
 // 自动音量 = 实时 AGC：每 200ms 量一次 RMS，慢慢把音量拉到同一目标，
 // 所以不同来源、不同响度的素材播出来听感一致。
 
-const AUTO_LEVEL_TARGET_DB = -22;   // 目标 RMS（dBFS），对白大约落在这个量级
+const TARGET_LUFS = -16;            // 与入库归一化目标保持一致
 const AUTO_LEVEL_MAX_DB = 18;       // 最大修正幅度
-const AUTO_LEVEL_GATE_DB = -55;     // 低于这个视为静音/噪声，不动增益
 
 const dsp = {
   enabled: localStorage.getItem('auto_level') !== '0',   // 默认开启
@@ -370,16 +379,6 @@ function dspGraph(el) {
   }
 }
 
-/** 按需建链：只有开了自动音量或人声增强才走 Web Audio。 */
-function dspMaybeInit() {
-  if (!dsp.enabled && !state.voiceBoost) return null;
-  const graph = dspGraph(activeEl());
-  if (graph && dsp.ctx && dsp.ctx.state === 'suspended') {
-    dsp.ctx.resume().catch(() => {});
-  }
-  return graph;
-}
-
 function dspResetGain() {
   dsp.gainDb = 0;
   dsp.graphs.forEach((graph) => {
@@ -387,40 +386,38 @@ function dspResetGain() {
   });
 }
 
-function autoLevelTick() {
-  if (!dsp.enabled) return;
-  const el = activeEl();
-  const graph = dsp.graphs.get(el);
-  if (!graph || el.paused || el.seeking) return;
-
-  graph.analyser.getFloatTimeDomainData(graph.buf);
-  let sum = 0;
-  for (let i = 0; i < graph.buf.length; i += 1) {
-    sum += graph.buf[i] * graph.buf[i];
-  }
-  const rms = Math.sqrt(sum / graph.buf.length);
-  const db = 20 * Math.log10(rms + 1e-9);
-  if (db < AUTO_LEVEL_GATE_DB) return;      // 静音段别乱拉增益
-
-  const wanted = Math.max(-AUTO_LEVEL_MAX_DB,
-    Math.min(AUTO_LEVEL_MAX_DB, AUTO_LEVEL_TARGET_DB - db));
-  const currentDb = 20 * Math.log10(graph.gain.gain.value + 1e-9);
-  // 慢慢靠近，避免忽大忽小
-  const nextDb = currentDb + (wanted - currentDb) * 0.3;
-  dsp.gainDb = nextDb;
-  graph.gain.gain.setTargetAtTime(Math.pow(10, nextDb / 20), dsp.ctx.currentTime, 0.25);
-
-  const tip = document.getElementById('volume-tip');
-  if (Math.abs(nextDb) >= 0.8) {
-    tip.textContent = `自动音量 ${nextDb > 0 ? '+' : ''}${nextDb.toFixed(1)} dB`;
-  } else if (state.volume >= 100) {
-    tip.textContent = '已到最大音量，建议 80% 以内保护听力';
-  } else {
-    tip.textContent = '';
-  }
+/**
+ * 按入库时记录的响度算一个静态增益。
+ *
+ * 入库流水线已经做过归一化（目标 −16 LUFS），并把"归一化后的实测响度"
+ * 写进了 audio_lufs；看模式播的是原始文件，用 lufs。
+ * 播放端只需要 gain = 10^((目标 − 实测)/20)，一次算好，不做运行时测量。
+ */
+function levelGain(item) {
+  if (!dsp.enabled || !item) return 1;
+  const measured = state.mode === 'video' ? item.lufs : item.audio_lufs;
+  if (typeof measured !== 'number' || !Number.isFinite(measured)) return 1;
+  const db = Math.max(-AUTO_LEVEL_MAX_DB, Math.min(AUTO_LEVEL_MAX_DB, TARGET_LUFS - measured));
+  return Math.pow(10, db / 20);
 }
 
-setInterval(autoLevelTick, 200);
+/** 把 >1 的增益交给 Web Audio；<=1 的部分直接用元素音量解决，不用建链。 */
+function setDspGain(factor) {
+  if (factor <= 1.0001) {
+    dsp.graphs.forEach((graph) => {
+      graph.gain.gain.setTargetAtTime(1, dsp.ctx ? dsp.ctx.currentTime : 0, 0.05);
+    });
+    dsp.gainDb = 0;
+    return true;
+  }
+  if (!dspAvailable()) return false;
+  const graph = dspGraph(activeEl());
+  if (!graph) return false;
+  if (dsp.ctx && dsp.ctx.state === 'suspended') dsp.ctx.resume().catch(() => {});
+  graph.gain.gain.setTargetAtTime(factor, dsp.ctx.currentTime, 0.05);
+  dsp.gainDb = 20 * Math.log10(factor);
+  return true;
+}
 
 function updateAutoLevelButton() {
   document.getElementById('btn-autolevel').classList.toggle('on', dsp.enabled);
@@ -430,21 +427,8 @@ document.getElementById('btn-autolevel').addEventListener('click', () => {
   dsp.enabled = !dsp.enabled;
   localStorage.setItem('auto_level', dsp.enabled ? '1' : '0');
   updateAutoLevelButton();
-
-  if (dsp.enabled) {
-    if (!dspAvailable()) {
-      toast('这台设备不支持自动音量');
-      dsp.enabled = false;
-      localStorage.setItem('auto_level', '0');
-      updateAutoLevelButton();
-      return;
-    }
-    dspMaybeInit();
-    toast('自动音量已开：每集会拉到相近响度');
-  } else {
-    dspResetGain();
-    toast('自动音量已关：音量取决于素材本身');
-  }
+  applyVolume();
+  toast(dsp.enabled ? '自动音量已开：按入库响度校正' : '自动音量已关：音量取决于素材本身');
 });
 
 /* ------------------------------------------------------------ 人声增强 */
@@ -576,8 +560,6 @@ function openPlayer(index) {
   showScreen('player');
   resetSession(item.video_id);
   updateSeek();
-  dspResetGain();          // 新的一集从 0 dB 开始，让 AGC 重新收敛
-  dspMaybeInit();
 
   // 同步开播，保住用户手势
   const played = el.play();
@@ -617,7 +599,7 @@ async function switchMode(mode) {
   el.playbackRate = state.rate;
   el.loop = state.loop;
   renderMode();
-  dspMaybeInit();
+  applyVolume();     // 切换模式后响度来源变了（lufs ↔ audio_lufs），重算校正
 
   const resume = () => {
     try {

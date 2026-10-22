@@ -75,4 +75,6 @@ ADDED_COLUMNS = [
     "ALTER TABLE video ADD COLUMN audio_rel VARCHAR(1024)",
     "ALTER TABLE video ADD COLUMN original_name VARCHAR(500)",
     "ALTER TABLE video ADD COLUMN language VARCHAR(8) DEFAULT 'en'",
+    "ALTER TABLE video ADD COLUMN lufs FLOAT",
+    "ALTER TABLE video ADD COLUMN audio_lufs FLOAT",
 ]

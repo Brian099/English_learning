@@ -211,25 +211,22 @@ async function main() {
   check('有音量滑块', Boolean(volInput), `默认 ${volInput ? volInput.value : '?'}%`);
   volInput.value = '60';
   volInput.dispatchEvent(new window.Event('input', { bubbles: true }));
-  check('音量作用于音频元素', Math.abs(audio.volume - 0.6) < 0.01, `audio.volume=${audio.volume}`);
-  check('音量同时作用于视频元素', Math.abs(video.volume - 0.6) < 0.01, `video.volume=${video.volume}`);
+  check('音量作用于当前播放元素',
+    audio.volume > 0 && audio.volume <= 0.61, `audio.volume=${audio.volume.toFixed(3)}`);
   check('音量记忆到本地', window.localStorage.getItem('volume') === '60');
 
   const autoBtn = doc.getElementById('btn-autolevel');
   check('有自动音量按钮', Boolean(autoBtn));
   check('自动音量默认开启', autoBtn.classList.contains('on'));
+  check('响度校正后音量仍在合法区间',
+    audio.volume > 0 && audio.volume <= 1, `audio.volume=${audio.volume.toFixed(3)}`);
   autoBtn.dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
   check('可关闭自动音量',
     !autoBtn.classList.contains('on') && window.localStorage.getItem('auto_level') === '0');
-  doc.getElementById('toast').classList.add('hidden');
+  check('关闭后音量回到滑块值', Math.abs(audio.volume - 0.6) < 0.01, `audio.volume=${audio.volume}`);
   autoBtn.dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
-  const autoToast = await waitFor(() => {
-    const el = doc.getElementById('toast');
-    return el && !el.classList.contains('hidden') ? textOf(el) : null;
-  });
-  check('无 Web Audio 时自动音量优雅回退',
-    autoToast === '这台设备不支持自动音量' && !autoBtn.classList.contains('on'),
-    autoToast || '');
+  check('可重新开启自动音量',
+    autoBtn.classList.contains('on') && window.localStorage.getItem('auto_level') === '1');
 
   const voiceBtn = doc.getElementById('btn-voice');
   check('有人声增强按钮', Boolean(voiceBtn));
