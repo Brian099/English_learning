@@ -239,6 +239,9 @@ def main() -> int:
     call(base, f"/api/students/{student_id}", "PATCH",
          {"name": student_name, "daily_target_min": 20}, token)
 
+    # 还原成自动排片，避免影响后续测试（学生端滑动测试需要多集）
+    call(base, f"/api/plans/{student_id}/{day}/auto?target_min=20", "POST", token=token)
+
     print(f"\n{'='*46}\n通过 {PASS}，失败 {FAIL}")
     return 0 if FAIL == 0 else 1
 

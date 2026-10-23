@@ -66,6 +66,15 @@ async function main() {
   const students = await apiAs(parentToken, '/api/students');
   if (!students.length) throw new Error('没有学生，请先建一个');
   const studentId = students[0].id;
+
+  // 保证今日计划至少 2 集，否则"上下滑切换"没法验证
+  const day = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Shanghai' });
+  let plan = null;
+  try { plan = await apiAs(parentToken, `/api/plans/${studentId}/${day}`); } catch (err) { plan = null; }
+  if (!plan || (plan.items || []).length < 2) {
+    await apiAs(parentToken, `/api/plans/${studentId}/${day}/auto?target_min=20`, 'POST');
+  }
+
   const pairCode = (await apiAs(parentToken, '/api/devices/pair-code', 'POST',
     { student_id: studentId, device_name: '学生网页端测试' })).code;
 

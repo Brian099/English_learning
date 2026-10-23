@@ -456,9 +456,20 @@ async function renderSettings() {
     const devices = await api('/api/devices');
 
     const studentRows = state.students.map((s) => `
-      <div class="item">
-        <div class="grow"><div class="title">${esc(s.name)}</div>
-          <div class="meta">每日目标 ${s.daily_target_min} 分钟</div></div>
+      <div class="item" data-student-row="${s.id}">
+        <div class="grow" data-view>
+          <div class="title">${esc(s.name)}</div>
+          <div class="meta">每日目标 ${s.daily_target_min} 分钟</div>
+        </div>
+        <div class="grow hidden" data-edit>
+          <input type="text" data-edit-name value="${esc(s.name)}" placeholder="姓名"
+                 style="width:38%;margin-right:6px">
+          <input type="number" data-edit-target min="5" max="120" step="5"
+                 value="${s.daily_target_min}" style="width:64px">
+          <span class="muted">分钟</span>
+        </div>
+        <button class="ghost small" data-edit-save="${s.id}" hidden>保存</button>
+        <button class="ghost small" data-edit-btn="${s.id}">编辑</button>
         <button class="ghost small" data-pair="${s.id}">配对码</button>
       </div>`).join('') || '<div class="empty">还没有学生</div>';
 
@@ -518,6 +529,42 @@ async function renderSettings() {
         toast('已添加');
         renderSettings();
       } catch (err) { toast(err.message); }
+    });
+
+    root.querySelectorAll('[data-edit-btn]').forEach((el) => {
+      el.addEventListener('click', () => {
+        const row = root.querySelector(`[data-student-row="${el.dataset.editBtn}"]`);
+        if (!row) return;
+        const editing = !row.querySelector('[data-edit]').classList.contains('hidden');
+        row.querySelector('[data-view]').classList.toggle('hidden', !editing);
+        row.querySelector('[data-edit]').classList.toggle('hidden', editing);
+        row.querySelector('[data-edit-save]').hidden = editing;
+        el.textContent = editing ? '编辑' : '取消';
+      });
+    });
+
+    root.querySelectorAll('[data-edit-save]').forEach((el) => {
+      el.addEventListener('click', async () => {
+        const row = root.querySelector(`[data-student-row="${el.dataset.editSave}"]`);
+        if (!row) return;
+        const name = row.querySelector('[data-edit-name]').value.trim();
+        const target = Number(row.querySelector('[data-edit-target]').value);
+        if (!name) { toast('姓名不能为空'); return; }
+        if (!Number.isFinite(target) || target < 5 || target > 120) {
+          toast('目标时长请填 5–120 分钟');
+          return;
+        }
+        try {
+          const saved = await api(`/api/students/${el.dataset.editSave}`, {
+            method: 'PATCH',
+            body: JSON.stringify({ name, daily_target_min: target }),
+          });
+          toast(saved.plan_rebuilt
+            ? `已保存：每日目标 ${saved.daily_target_min} 分钟，今日计划已重排`
+            : `已保存：每日目标 ${saved.daily_target_min} 分钟`);
+          await renderSettings();
+        } catch (err) { toast(err.message); }
+      });
     });
 
     root.querySelectorAll('[data-pair]').forEach((el) => {

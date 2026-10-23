@@ -200,6 +200,34 @@ async function main() {
   check('设备区可撤销', doc.querySelectorAll('#tab-settings [data-revoke]').length > 0);
   check('有扫描目录按钮', Boolean(doc.getElementById('do-scan')));
 
+  // 学生管理：改每日目标时长
+  const editBtn = doc.querySelector('#tab-settings [data-edit-btn]');
+  check('学生行有编辑按钮', Boolean(editBtn));
+  const metaBefore = textOf(doc.querySelector('#tab-settings [data-student-row] [data-view] .meta'));
+  editBtn.dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
+  const editBox = doc.querySelector('#tab-settings [data-student-row] [data-edit]');
+  check('点编辑出现输入框', !editBox.classList.contains('hidden'));
+  const editTargetField = doc.querySelector('#tab-settings [data-edit-target]');
+  editTargetField.value = '35';
+  doc.querySelector('#tab-settings [data-edit-save]')
+    .dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
+  const metaAfter = await waitFor(() => {
+    const el = doc.querySelector('#tab-settings [data-student-row] [data-view] .meta');
+    const text = el ? textOf(el) : '';
+    return text.includes('35') ? text : null;
+  });
+  check('保存后列表显示新目标', Boolean(metaAfter), `${metaBefore} → ${metaAfter || '未更新'}`);
+  // 还原
+  const editBtn2 = doc.querySelector('#tab-settings [data-edit-btn]');
+  editBtn2.dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
+  doc.querySelector('#tab-settings [data-edit-target]').value = '20';
+  doc.querySelector('#tab-settings [data-edit-save]')
+    .dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
+  await waitFor(() => {
+    const el = doc.querySelector('#tab-settings [data-student-row] [data-view] .meta');
+    return el && textOf(el).includes('20');
+  });
+
   // 生成配对码
   doc.querySelector('#tab-settings [data-pair]').dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
   const pairCode = await waitFor(() => {
