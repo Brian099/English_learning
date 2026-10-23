@@ -904,7 +904,15 @@ function watchIngest(expected) {
     return;
   }
   try {
-    await api('/api/students');
+    // 用 /api/account/me 探测会话：主账号和子账号都能访问
+    // （之前用 /api/students，主账号会 403，导致每次刷新都掉回登录页）
+    const me = await api('/api/account/me');
+    state.role = me.role;
+    state.family = me.family;
+    state.username = me.username;
+    localStorage.setItem('role', me.role);
+    localStorage.setItem('family', me.family);
+    localStorage.setItem('username', me.username);
     showApp();
   } catch (err) {
     showLogin();

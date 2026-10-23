@@ -251,7 +251,23 @@ async function main() {
   check('点击配对码按钮生成 6 位码', Boolean(pairCode), pairCode || '');
   doc.getElementById('modal-close').dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
 
-  console.log('\n7. 退出登录');
+  console.log('\n8. 刷新后保持登录');
+  const savedToken = window.localStorage.getItem('token');
+  const savedRole = window.localStorage.getItem('role');
+  const dom2 = new JSDOM(html, { url: BASE + '/', runScripts: 'outside-only', pretendToBeVisual: true });
+  const win2 = dom2.window;
+  win2.fetch = (input, init) => fetch(new URL(input, BASE), init);
+  win2.localStorage.setItem('token', savedToken);
+  win2.localStorage.setItem('role', savedRole);
+  win2.eval(appJs);
+  const stillIn = await waitFor(() => !win2.document.getElementById('app').classList.contains('hidden'));
+  check('带着本地令牌刷新仍在主界面', Boolean(stillIn));
+  check('刷新后没有回到登录页',
+    win2.document.getElementById('login').classList.contains('hidden'));
+  check('刷新后导航项按角色显示',
+    !win2.document.querySelector('#tabs button[data-tab="plan"]').classList.contains('hidden'));
+  dom2.window.close();
+  console.log('\n9. 退出登录');
   doc.getElementById('logout').dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
   check('退出后回到登录页', !doc.getElementById('login').classList.contains('hidden'));
   check('令牌已清除', !window.localStorage.getItem('token'));
