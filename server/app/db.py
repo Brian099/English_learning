@@ -1,4 +1,4 @@
-from collections.abc import AsyncIterator
+﻿from collections.abc import AsyncIterator
 
 from sqlalchemy import event
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
@@ -121,4 +121,5 @@ ADDED_COLUMNS = [
     "ALTER TABLE video ADD COLUMN language VARCHAR(8) DEFAULT 'en'",
     "ALTER TABLE video ADD COLUMN lufs FLOAT",
     "ALTER TABLE video ADD COLUMN audio_lufs FLOAT",
+    "ALTER TABLE video ADD COLUMN lufs_tp FLOAT",
 ]

@@ -1,4 +1,4 @@
-'use strict';
+﻿'use strict';
 
 /* 学生端：配对 → 今日任务 → 播放器（听/看双模式 + 硬字幕遮挡 + 有效时长统计） */
 
@@ -312,7 +312,9 @@ function applyVolume() {
   const boosted = setDspGain(Math.max(gain, 1));
   if (!boosted) el.volume = base;      // 需要放大但环境不支持，保持原音量
 
-  dsp.gainDb = 20 * Math.log10(gain);
+  // 提示要反映"实际生效"的增益，放大失败时不能显示成已校正
+  const applied = boosted ? gain : Math.min(gain, 1);
+  dsp.gainDb = 20 * Math.log10(applied);
 
   volumeInput.value = String(value);
   volumeValue.textContent = `${value}%`;
@@ -347,7 +349,8 @@ volumeInput.addEventListener('input', (event) => {
 // 自动音量 = 实时 AGC：每 200ms 量一次 RMS，慢慢把音量拉到同一目标，
 // 所以不同来源、不同响度的素材播出来听感一致。
 
-const TARGET_LUFS = -16;            // 与入库归一化目标保持一致
+const TARGET_LUFS = -16;            // 播放目标响度
+const PEAK_CEILING = -1;            // 放大后真峰值上限（dBFS）
 const AUTO_LEVEL_MAX_DB = 18;       // 最大修正幅度
 
 const dsp = {
@@ -408,7 +411,14 @@ function levelGain(item) {
   if (!dsp.enabled || !item) return 1;
   const measured = state.mode === 'video' ? item.lufs : item.audio_lufs;
   if (typeof measured !== 'number' || !Number.isFinite(measured)) return 1;
-  const db = Math.max(-AUTO_LEVEL_MAX_DB, Math.min(AUTO_LEVEL_MAX_DB, TARGET_LUFS - measured));
+
+  let db = TARGET_LUFS - measured;
+  // 峰值保护：放大后真峰值不能超过 PEAK_CEILING，否则会削波
+  const peak = item.lufs_tp;
+  if (typeof peak === 'number' && Number.isFinite(peak)) {
+    db = Math.min(db, PEAK_CEILING - peak);
+  }
+  db = Math.max(-AUTO_LEVEL_MAX_DB, Math.min(AUTO_LEVEL_MAX_DB, db));
   return Math.pow(10, db / 20);
 }
 

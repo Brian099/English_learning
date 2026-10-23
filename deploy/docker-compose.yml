@@ -1,4 +1,4 @@
-name: kids-english-listening
+﻿name: kids-english-listening
 
 # 飞牛 fnOS 部署用 —— 单容器、零配置：改下面那一行媒体路径就能跑。
 #
@@ -13,10 +13,8 @@ services:
     image: brian9909/moer:latest
     environment:
       TZ: Asia/Shanghai
-      # 扫描到新视频后自动：统一音量 → 转音频 → 提取对白 → 难度分级
+      # 扫描到新视频后自动：转音频 → 测响度 → 提取对白 → 难度分级
       AUTO_INGEST: "1"
-      NORMALIZE_AUDIO: "1"
-      NORMALIZE_VIDEO: "0"
       TARGET_LUFS: "-16"
       # 转写成功后删除 ASR 输入的 wav（32KB/s 不压缩，很占地方）
       # 设成 1 可保留，调试用

@@ -1,4 +1,4 @@
-# Local dev server (Windows)
+﻿# Local dev server (Windows)
 #
 #   tools\dev_server.cmd        (double-click, or run from a terminal)
 #   powershell -ExecutionPolicy Bypass -File tools\dev_server.ps1
@@ -28,8 +28,6 @@ $env:TZ              = "Asia/Shanghai"
 
 # ingest pipeline
 $env:AUTO_INGEST     = "1"
-$env:NORMALIZE_AUDIO = "1"
-$env:NORMALIZE_VIDEO = "0"
 $env:TARGET_LUFS     = "-16"
 $env:KEEP_ASR_WAV    = "0"
 $env:WHISPER_MODEL   = "small.en"

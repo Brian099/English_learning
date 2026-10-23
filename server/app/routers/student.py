@@ -1,4 +1,4 @@
-from datetime import date, datetime, timedelta
+﻿from datetime import date, datetime, timedelta
 from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -101,8 +101,9 @@ async def student_today(
                     "kind": item.kind,
                     "order": item.order_index,
                     # 响度：前端据此做静态音量校正
-                    "lufs": video.lufs,            # 原始文件（看模式）
-                    "audio_lufs": video.audio_lufs,  # 归一化后的音轨（听模式）
+                    "lufs": video.lufs,              # 播放响度（看模式）
+                    "audio_lufs": video.audio_lufs,  # 播放响度（听模式）
+                    "lufs_tp": video.lufs_tp,        # 真峰值，前端限制放大用
                 }
             )
     else:
@@ -124,6 +125,7 @@ async def student_today(
                     "order": len(items),
                     "lufs": video.lufs,
                     "audio_lufs": video.audio_lufs,
+                    "lufs_tp": video.lufs_tp,
                 }
             )
 

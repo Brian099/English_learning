@@ -89,51 +89,17 @@ def measure_loudness(src: Path) -> dict | None:
     return values or None
 
 
-def loudnorm_filter(measured: dict | None) -> str | None:
-    """第二遍的滤镜串；没测量到就退回单遍动态归一。
+def ensure_audio(src: Path, dst: Path) -> tuple[bool, str | None]:
+    """抽播放用音轨：AAC + faststart（索引在文件头，浏览器才能流式播）。
 
-    末尾再挂一个限制器：短素材线性归一失败时 loudnorm 会掉到动态模式，
-    峰值可能超过 0 dBFS 削波（实测有一集 +1.5 dBTP）。限制器兜住 -1 dBFS。
+    不做音量归一：响度在下面测一次记进数据库，由学生端播放时自动调。
     """
-    base = f"loudnorm=I={settings.target_lufs}:TP={settings.target_tp}:LRA={settings.target_lra}"
-    if measured:
-        base += (
-            f":measured_I={measured.get('input_i', -23)}"
-            f":measured_TP={measured.get('input_tp', -2)}"
-            f":measured_LRA={measured.get('input_lra', 7)}"
-            f":measured_thresh={measured.get('input_thresh', -34)}"
-            f":offset={measured.get('target_offset', 0)}:linear=true"
-        )
-    return f"{base},alimiter=limit=0.707:level=disabled"
-
-
-def ensure_audio(src: Path, dst: Path, af: str | None = None) -> tuple[bool, str | None]:
-    """抽播放用音轨：64k AAC + faststart（索引在文件头，浏览器才能流式播）。"""
     if dst.is_file() and dst.stat().st_size > 0:
         return True, None
     dst.parent.mkdir(parents=True, exist_ok=True)
-    args = ["-i", str(src), "-vn"]
-    if af:
-        args += ["-af", af]
-    # 96k 而不是 64k：AAC 编码会有过冲，码率太低真峰值会顶到 0 dBTP 以上
+    args = ["-i", str(src), "-vn"]    # 96k 而不是 64k：AAC 编码会有过冲，码率太低真峰值会顶到 0 dBTP 以上
     args += ["-c:a", "aac", "-b:a", "96k", "-ac", "2",
              "-movflags", "+faststart", str(dst)]
-    return _run_ffmpeg(args)
-
-
-def ensure_normalized_video(src: Path, dst: Path, af: str | None = None) -> tuple[bool, str | None]:
-    """把视频流原样复制、只重编音频做音量统一，写到 cache。
-
-    媒体目录是只读挂载的，不能原地改；播放时优先用这份 cache 版本。
-    代价是额外占一份视频空间（约等于原文件大小）。
-    """
-    if dst.is_file() and dst.stat().st_size > 0:
-        return True, None
-    dst.parent.mkdir(parents=True, exist_ok=True)
-    args = ["-i", str(src), "-map", "0:v:0", "-map", "0:a:0?", "-c:v", "copy"]
-    if af:
-        args += ["-af", af]
-    args += ["-c:a", "aac", "-b:a", "96k", "-movflags", "+faststart", str(dst)]
     return _run_ffmpeg(args)
 
 
@@ -246,41 +212,28 @@ async def _ingest_one(db, video: Video) -> str:
 
     audio_path = Path(settings.cache_root) / "audio" / f"{video.id}.m4a"
     wav_path = Path(settings.cache_root) / "asr" / f"{video.id}.wav"
-    video_path = Path(settings.cache_root) / "video" / f"{video.id}.mp4"
 
-    # 1) 音量测量（两遍归一的前提）
-    af = None
-    if settings.normalize_audio or settings.normalize_video:
-        measured = await asyncio.to_thread(measure_loudness, src)
-        af = loudnorm_filter(measured)
-        if measured and measured.get("input_i"):
-            try:
-                video.lufs = float(measured["input_i"])   # 记录原始响度，便于排查
-            except (TypeError, ValueError):
-                pass
-
-    # 2) 播放音轨（带音量统一）
-    ok, error = await asyncio.to_thread(ensure_audio, src, audio_path, af)
+    # 1) 抽播放音轨（不做归一，原样编码）
+    ok, error = await asyncio.to_thread(ensure_audio, src, audio_path)
     if not ok:
         _state["last_error"] = f"{video.title} 抽音轨失败: {error}"
         return "failed"
 
-    # 2b) 量一下归一化后的实际响度，存库供播放端做静态校正
-    #     （归一化不是 100% 精确，实测有 ±1.5 dB 的残差；存下来让前端一次修正到位）
-    out_measured = await asyncio.to_thread(measure_loudness, audio_path)
-    if out_measured and out_measured.get("input_i"):
+    # 2) 测一次响度存库：学生端播放时按它自动调音量
+    #    测的是实际要播的那份文件，所以看/听两种模式用同一个值
+    measured = await asyncio.to_thread(measure_loudness, audio_path)
+    if measured and measured.get("input_i"):
         try:
-            video.audio_lufs = float(out_measured["input_i"])
+            value = float(measured["input_i"])
+            video.lufs = value
+            video.audio_lufs = value
+            tp = measured.get("input_tp")
+            if tp is not None:
+                video.lufs_tp = float(tp)
         except (TypeError, ValueError):
             pass
 
-    # 3) 看模式也归一化（可选，会额外占一份视频空间）
-    if settings.normalize_video:
-        ok, error = await asyncio.to_thread(ensure_normalized_video, src, video_path, af)
-        if not ok:
-            _state["last_error"] = f"{video.title} 视频归一化失败: {error}"
-
-    # 2) 已有转写就跳过（幂等）
+    # 3) 已有转写就跳过（幂等）
     existing = (
         await db.execute(select(Transcript).where(Transcript.video_id == video.id))
     ).scalar_one_or_none()

@@ -113,7 +113,7 @@ english-kids/
 1. 把视频拷进媒体目录（文件名你自己整理，程序不改名）
 2. 家长端 → **设置 → 内容维护 → 扫描视频目录**
 
-系统会自动接着做：统一音量（−16 LUFS）→ 抽音轨 → 提取对白 → 难度分级。
+系统会自动接着做：抽音轨 → 测响度 → 提取对白 → 难度分级。
 首次会下载转写模型（约 480MB）。
 
 ---
@@ -146,9 +146,7 @@ docker compose pull && docker compose up -d
 |---|---|---|
 | `PARENT_PASSWORD` | `kids1234` | 家长端密码，**建议改** |
 | `AUTO_INGEST` | `1` | 扫描后自动跑流水线；`0` 只入库元数据 |
-| `NORMALIZE_AUDIO` | `1` | 统一音量到 −16 LUFS |
-| `NORMALIZE_VIDEO` | `0` | 看模式也归一化（额外占视频空间） |
-| `TARGET_LUFS` | `-16` | 目标响度 |
+| `TARGET_LUFS` | `-16` | 播放端目标响度（LUFS） |
 | `WHISPER_MODEL` | `small.en` | 或 `base.en`（更快）/ `medium.en`（更准） |
 | `WHISPER_THREADS` | `3` | 留一核给 NAS |
 | `TZ` | `Asia/Shanghai` | 统计切天用的时区 |
