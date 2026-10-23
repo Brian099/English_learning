@@ -141,6 +141,18 @@ async function main() {
     `${textOf(doc.getElementById('target-min'))} 分钟`);
   check('进度环有描边值', doc.getElementById('ring-fg').style.strokeDashoffset !== '');
 
+  // 三栏布局：序号 · 名称 · 时长
+  const firstTask = doc.querySelector('#task-list .task[data-index]');
+  const columns = Array.from(firstTask.children).map((el) => el.className);
+  check('任务行分三栏（序号/名称/时长）',
+    columns.length === 3 && columns[0] === 'idx' && columns[1] === 'name' && columns[2] === 'dur',
+    columns.join(' | '));
+  check('时长显示在名称右侧', /^\d+:\d{2}$/.test(textOf(firstTask.querySelector('.dur'))),
+    textOf(firstTask.querySelector('.dur')));
+  check('名称保留完整文本（靠 CSS 两行截断，不硬截）',
+    firstTask.querySelector('.name').textContent.trim().length > 10,
+    `${firstTask.querySelector('.name').textContent.trim().length} 字`);
+
   console.log('\n3. 抖音式播放器（默认看模式）');
   playCalls = 0;
   doc.getElementById('start-btn').dispatchEvent(new window.MouseEvent('click', { bubbles: true }));

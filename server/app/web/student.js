@@ -204,17 +204,15 @@ function renderHome() {
 
   const list = document.getElementById('task-list');
   if (!data.items.length) {
-    list.innerHTML = '<div class="task"><div class="info"><div class="name">今天还没有任务</div></div></div>';
+    list.innerHTML = '<div class="task" style="grid-template-columns:1fr">' +
+      '<div class="name">今天还没有任务</div></div>';
     return;
   }
   list.innerHTML = data.items.map((item, index) => `
     <div class="task ${item.completed ? 'done' : ''}" data-index="${index}">
       <div class="idx">${item.completed ? '✓' : index + 1}</div>
-      <div class="info">
-        <div class="name">${escapeHtml(item.title)}</div>
-        <div class="meta">${fmtTime((item.duration_ms || 0) / 1000)}${item.level ? ' · ' + item.level : ''}</div>
-      </div>
-      <div class="idx" style="background:transparent;color:var(--brand)">▶</div>
+      <div class="name" title="${escapeHtml(item.title)}">${escapeHtml(item.title)}</div>
+      <div class="dur">${fmtTime((item.duration_ms || 0) / 1000)}</div>
     </div>`).join('');
 
   list.querySelectorAll('.task[data-index]').forEach((node) => {
