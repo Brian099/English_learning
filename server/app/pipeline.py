@@ -1,4 +1,4 @@
-"""入库流水线：新视频 → 轻量音轨 → 转写 → 难度分级。
+﻿"""入库流水线：新视频 → 轻量音轨 → 转写 → 难度分级。
 
 设计目标是"拷进去就不用管了"：扫描到新视频后自动跑完这几步，
 家长端只看到进度条，跑完就能按难度排片。
@@ -241,20 +241,20 @@ async def _ingest_one(db, video: Video) -> str:
         _state["skipped"] += 1
         return "skipped"
 
-    # 3) ASR 输入
+    # 4) ASR 输入（16k 单声道 PCM）
     ok, error = await asyncio.to_thread(ensure_wav, src, wav_path)
     if not ok:
         _state["last_error"] = f"{video.title} 抽音频失败: {error}"
         return "failed"
 
-    # 4) 转写（重活放线程）
+    # 5) 转写（重活放线程）
     try:
         result = await asyncio.to_thread(transcribe_wav, wav_path)
     except Exception as exc:
         _state["last_error"] = f"{video.title} 转写失败: {str(exc)[:160]}"
         return "failed"
 
-    # 5) 落库 + 分级
+    # 6) 落库 + 分级
     metrics = analyze_text(result["text"], result["speech_ms"] / 1000)
     transcript = existing or Transcript(video_id=video.id)
     transcript.model = settings.whisper_model

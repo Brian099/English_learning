@@ -212,7 +212,6 @@ async function renderOwnerOverview(root) {
         <div class="stats">
           <div class="stat"><b>${fmtBytes(cache.audio_bytes)}</b><span>播放音轨</span></div>
           <div class="stat"><b>${fmtBytes(cache.asr_bytes)}</b><span>转写输入</span></div>
-          <div class="stat"><b>${fmtBytes(cache.video_bytes)}</b><span>归一化视频</span></div>
           <div class="stat"><b>${fmtBytes(cache.total_bytes)}</b><span>合计</span></div>
         </div>
         <div class="muted" style="margin-top:8px">

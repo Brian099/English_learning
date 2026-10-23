@@ -1,4 +1,4 @@
-"""主账号概览：资源、家庭、账号、缓存、入库状态。"""
+﻿"""主账号概览：资源、家庭、账号、缓存、入库状态。"""
 
 from __future__ import annotations
 
@@ -65,10 +65,9 @@ async def overview(db: AsyncSession = Depends(get_db)) -> dict:
     # 听模式实际能播的集数 = 预处理音轨 + 服务端从视频抽出来的
     cache_audio_count = len(list((cache_root / "audio").glob("*.m4a"))) if (cache_root / "audio").is_dir() else 0
     with_audio = max(with_audio, cache_audio_count)
-    cache = {
-        name: _dir_size(cache_root / name)
-        for name in ("audio", "asr", "video", "transcript")
-    }
+    # 只统计现在还会产生的目录：播放音轨、转写输入
+    # （归一化视频和转写导出已移除，不再统计）
+    cache = {name: _dir_size(cache_root / name) for name in ("audio", "asr")}
 
     state = pipeline_state()
     return {
@@ -92,8 +91,6 @@ async def overview(db: AsyncSession = Depends(get_db)) -> dict:
         "cache": {
             "audio_bytes": cache["audio"],
             "asr_bytes": cache["asr"],
-            "video_bytes": cache["video"],
-            "transcript_bytes": cache["transcript"],
             "total_bytes": sum(cache.values()),
         },
         "ingest": {
