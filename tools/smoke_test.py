@@ -205,6 +205,40 @@ def main() -> int:
     check("手动保存后来源变 manual",
           call(base, f"/api/plans/{student_id}/{day}", token=token).get("source") == "manual")
 
+    print("\n12. 改每日目标同步今日计划")
+    student_name = students[0]["name"]
+    # 先恢复成自动排片，模拟"学生端已自动生成今日计划"
+    call(base, f"/api/plans/{student_id}/{day}/auto?target_min=20", "POST", token=token)
+    before = call(base, "/api/student/today", token=device_token)
+    before_target = before["target_min"]
+
+    patched = call(base, f"/api/students/{student_id}", "PATCH",
+                   {"name": student_name, "daily_target_min": before_target + 20}, token)
+    check("PATCH 学生返回新目标", patched["daily_target_min"] == before_target + 20,
+          f"{before_target} → {patched['daily_target_min']}")
+    check("自动计划随之重排", patched.get("plan_rebuilt") is True, str(patched.get("plan_rebuilt")))
+
+    after = call(base, "/api/student/today", token=device_token)
+    check("学生端目标时长立即生效", after["target_min"] == before_target + 20,
+          f"{before_target} → {after['target_min']} 分钟")
+    check("重排后任务不为空", len(after["items"]) >= 1, f"{len(after['items'])} 集")
+
+    # 手动计划：只改目标数字，不动家长挑好的内容
+    call(base, f"/api/plans/{student_id}/{day}", "PUT",
+         {"target_min": 10, "video_ids": [videos["items"][0]["id"]]}, token)
+    manual_patch = call(base, f"/api/students/{student_id}", "PATCH",
+                        {"name": student_name, "daily_target_min": 25}, token)
+    check("手动计划不重排", manual_patch.get("plan_rebuilt") is False,
+          str(manual_patch.get("plan_rebuilt")))
+    manual_plan = call(base, f"/api/plans/{student_id}/{day}", token=token)
+    check("手动计划只更新目标数字",
+          manual_plan["target_min"] == 25 and len(manual_plan["items"]) == 1,
+          f"目标 {manual_plan['target_min']} 分钟 · {len(manual_plan['items'])} 集")
+
+    # 还原，避免影响其他断言
+    call(base, f"/api/students/{student_id}", "PATCH",
+         {"name": student_name, "daily_target_min": 20}, token)
+
     print(f"\n{'='*46}\n通过 {PASS}，失败 {FAIL}")
     return 0 if FAIL == 0 else 1
 

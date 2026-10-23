@@ -1,4 +1,5 @@
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 import mimetypes
 import re
@@ -6,17 +7,25 @@ import re
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Request, Response, status
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
-from sqlalchemy import func, select
+from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..config import settings
 from ..db import get_db
-from ..models import Series, Student, Video
+from ..models import Plan, PlanItem, Series, Student, Video
 from ..pipeline import run_ingest
 from ..scan import scan_media, scan_preview
+from ..scheduler import build_daily_plan
 from ..security import read_auth, require_parent
 
 router = APIRouter(prefix="/api", tags=["content"])
+
+TZ = ZoneInfo(settings.tz)
+
+
+def _today():
+    from datetime import datetime
+    return datetime.now(TZ).date()
 
 
 def _has_audio(video: Video) -> bool:
@@ -71,10 +80,61 @@ async def patch_student(
     student = await db.get(Student, student_id)
     if student is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "学生不存在")
+
+    target_changed = student.daily_target_min != body.daily_target_min
     student.name = body.name
     student.daily_target_min = body.daily_target_min
+
+    # 改了目标时长，今天的计划要跟着变，否则学生端还显示旧数字
+    rebuilt = False
+    if target_changed:
+        rebuilt = await _sync_today_plan(db, student)
+
     await db.commit()
-    return {"id": student.id, "name": student.name, "daily_target_min": student.daily_target_min}
+    return {
+        "id": student.id,
+        "name": student.name,
+        "daily_target_min": student.daily_target_min,
+        "plan_rebuilt": rebuilt,
+    }
+
+
+async def _sync_today_plan(db: AsyncSession, student: Student) -> bool:
+    """把今天的计划同步成新的目标时长。
+
+    - 自动排的计划：整份重排（时长变了，内容也要跟着变）
+    - 手动改过的计划：只改目标数字，不动家长挑好的内容
+    """
+    day = _today()
+    plan = (
+        await db.execute(select(Plan).where(Plan.student_id == student.id, Plan.day == day))
+    ).scalar_one_or_none()
+    if plan is None:
+        return False
+
+    if plan.source != "auto":
+        plan.target_min = student.daily_target_min
+        return False
+
+    built = await build_daily_plan(db, student, day)
+    if not built["items"]:
+        plan.target_min = student.daily_target_min
+        return False
+
+    await db.execute(delete(PlanItem).where(PlanItem.plan_id == plan.id))
+    for item in built["items"]:
+        db.add(
+            PlanItem(
+                plan_id=plan.id,
+                video_id=item["video_id"],
+                order_index=item["order"],
+                kind=item["kind"],
+            )
+        )
+    plan.target_min = built["target_min"]
+    plan.note = (f"自动排片：复习 {built['review_count']} · 新内容 {built['new_count']}"
+                 f" · 重复 {built['repeat_count']}")
+    return True
 
 
 # -------------------------------------------------------------------- series
