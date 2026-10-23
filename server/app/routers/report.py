@@ -1,4 +1,4 @@
-from datetime import date, datetime, timedelta
+﻿from datetime import date, datetime, timedelta
 from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from ..config import settings
 from ..db import get_db
 from ..models import DailyStat, Plan, PlayEvent, Student, Video
+from ..scheduler import target_for_day
 from ..security import require_parent
 
 router = APIRouter(prefix="/api", tags=["report"])
@@ -89,7 +90,7 @@ async def dashboard(db: AsyncSession = Depends(get_db)) -> dict:
         plan = (
             await db.execute(select(Plan).where(Plan.student_id == student.id, Plan.day == today))
         ).scalar_one_or_none()
-        target = plan.target_min if plan else student.daily_target_min
+        target = plan.target_min if plan else target_for_day(student, day)
         effective_min = round((today_stat.effective_ms if today_stat else 0) / 60000, 1)
 
         total_week = round(sum(d["effective_min"] for d in day_rows), 1)
@@ -125,7 +126,7 @@ async def report_today(student_id: int, db: AsyncSession = Depends(get_db)) -> d
         await db.execute(select(Plan).where(Plan.student_id == student_id, Plan.day == day))
     ).scalar_one_or_none()
 
-    target_min = plan.target_min if plan else student.daily_target_min
+    target_min = plan.target_min if plan else target_for_day(student, day)
     effective_min = round((stat.effective_ms if stat else 0) / 60000, 1)
 
     return {

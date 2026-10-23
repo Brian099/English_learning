@@ -303,45 +303,20 @@ async function renderPlan() {
       <div class="card">
         <div class="row">
           <select id="plan-student">${studentOptions}</select>
-          <input type="date" id="plan-date" value="${state.planDate}">
-          <label class="muted" style="display:flex;align-items:center;gap:6px">
-            目标 <input type="number" id="plan-target" min="0" max="180" style="width:72px">
-            <span style="font-size:12px">分钟（同时更新默认目标）</span>
-          </label>
+          <button id="plan-auto" class="ghost">✨ 重排今日</button>
+          <span class="muted" id="plan-hint"></span>
+        </div>
+        <div class="muted" style="margin-top:8px;line-height:1.6">
+          排片按星期目标自动生成，已听过的不会再排。
+          目标在「设置 → 学生 → 编辑」里按周一到周日分别设置。
         </div>
       </div>
-      <div class="card">
-        <h2>选择今天要听的</h2>
-        <div class="chips">${state.series.map((s) => (
-          `<button class="chip ${String(state.seriesFilter) === String(s.id) ? 'active' : ''}"
-            data-plan-series="${s.id}">${esc(s.name)}</button>`
-        )).join('')}</div>
-        <div id="plan-list" class="list"><div class="empty">加载中…</div></div>
-      </div>
-      <div class="card">
-        <div class="row">
-          <button id="plan-auto">✨ 自动排片</button>
-          <button id="plan-save" class="ghost">保存手动调整</button>
-          <span class="muted" id="plan-count">已选 0 集</span>
-          <span class="muted" id="plan-source"></span>
-        </div>
-      </div>`;
+      <div id="week-view"></div>`;
 
     document.getElementById('plan-student').addEventListener('change', (event) => {
       state.planStudentId = Number(event.target.value);
       loadPlan();
     });
-    document.getElementById('plan-date').addEventListener('change', (event) => {
-      state.planDate = event.target.value;
-      loadPlan();
-    });
-    root.querySelectorAll('[data-plan-series]').forEach((el) => {
-      el.addEventListener('click', () => {
-        state.seriesFilter = state.seriesFilter === el.dataset.planSeries ? '' : el.dataset.planSeries;
-        renderPlan();
-      });
-    });
-    document.getElementById('plan-save').addEventListener('click', savePlan);
     document.getElementById('plan-auto').addEventListener('click', autoPlan);
 
     await loadPlan();
@@ -350,98 +325,57 @@ async function renderPlan() {
   }
 }
 
+/** 未来 7 天的排片视图 */
 async function loadPlan() {
-  const listEl = document.getElementById('plan-list');
-  if (!listEl) return;
-  listEl.innerHTML = '<div class="empty">加载中…</div>';
+  const root = document.getElementById('week-view');
+  if (!root) return;
+  root.innerHTML = '<div class="card"><div class="empty">加载中…</div></div>';
   try {
-    const params = new URLSearchParams();
-    if (state.seriesFilter) params.set('series_id', state.seriesFilter);
-    const data = await api(`/api/videos?${params.toString()}`);
-
-    let existing = { items: [] };
-    try {
-      existing = await api(`/api/plans/${state.planStudentId}/${state.planDate}`);
-    } catch (err) {
-      existing = { items: [] };
-    }
-    state.planSelected = new Set((existing.items || []).map((item) => item.video_id));
-
-    // 目标分钟数：优先用当天已有的计划，其次用学生的默认目标
-    const targetInput = document.getElementById('plan-target');
-    if (targetInput) {
-      const student = state.students.find((s) => s.id === state.planStudentId);
-      targetInput.value = existing.target_min ?? (student ? student.daily_target_min : 20);
+    const data = await api(`/api/schedule/${state.planStudentId}?days=7`);
+    const hint = document.getElementById('plan-hint');
+    if (hint) {
+      const targets = (data.weekday_targets || []).join(' / ');
+      hint.textContent = targets ? `周一→周日 ${targets} 分钟` : '';
     }
 
-    const sourceEl = document.getElementById('plan-source');
-    if (sourceEl) {
-      sourceEl.textContent = existing.source === 'auto'
-        ? '· 程序自动排的'
-        : (existing.source === 'manual' ? '· 家长手动排的' : '');
-    }
+    root.innerHTML = data.days.map((day) => {
+      const badge = day.is_today
+        ? '<span class="chip active" style="font-size:12px;padding:2px 8px">今天</span>'
+        : '';
+      const short = day.short ? ' · <span style="color:#d9453b">内容不足</span>' : '';
+      const items = day.items.length
+        ? day.items.map((item, index) => `
+            <div class="item" style="padding:8px 0;border-bottom:1px dashed #eef2ff">
+              <div class="grow">
+                <div class="title" style="font-size:14px">${index + 1}. ${esc(item.title)}</div>
+              </div>
+              <span class="muted">${fmtDuration(item.duration_ms)}</span>
+            </div>`).join('')
+        : '<div class="empty" style="padding:10px 0">没有可排的内容（视频都听过了）</div>';
 
-    listEl.innerHTML = data.items.map((video) => `
-      <label class="item">
-        <input type="checkbox" data-pick="${video.id}" ${state.planSelected.has(video.id) ? 'checked' : ''}>
-        <div class="grow">
-          <div class="title">${esc(video.title)}</div>
-          <div class="meta">${fmtDuration(video.duration_ms)}${video.level ? ' · ' + video.level : ''}</div>
-        </div>
-      </label>`).join('') || '<div class="empty">没有视频</div>';
-
-    listEl.querySelectorAll('[data-pick]').forEach((el) => {
-      el.addEventListener('change', () => {
-        const id = Number(el.dataset.pick);
-        if (el.checked) state.planSelected.add(id);
-        else state.planSelected.delete(id);
-        updatePlanCount();
-      });
-    });
-    updatePlanCount();
+      return `
+        <div class="card">
+          <div class="row" style="justify-content:space-between;align-items:center">
+            <div><b>${day.weekday}</b> <span class="muted">${day.day}</span> ${badge}</div>
+            <div class="muted">目标 ${day.target_min} 分钟 · 实际 ${day.total_min} 分钟${short}</div>
+          </div>
+          <div class="list" style="margin-top:6px">${items}</div>
+        </div>`;
+    }).join('');
   } catch (err) {
-    listEl.innerHTML = `<div class="empty">${esc(err.message)}</div>`;
+    root.innerHTML = `<div class="card"><div class="empty">${esc(err.message)}</div></div>`;
   }
-}
-
-function updatePlanCount() {
-  const el = document.getElementById('plan-count');
-  if (el) el.textContent = `已选 ${state.planSelected.size} 集`;
 }
 
 async function autoPlan() {
-  const targetInput = document.getElementById('plan-target');
-  const target = targetInput ? Number(targetInput.value) : 20;
+  const day = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Shanghai' });
   try {
-    const query = Number.isFinite(target) && target > 0 ? `?target_min=${target}` : '';
-    const result = await api(`/api/plans/${state.planStudentId}/${state.planDate}/auto${query}`, {
-      method: 'POST',
-    });
-    if (result.message) {
-      toast(result.message);
-      await loadPlan();
-      return;
-    }
-    toast(`已排 ${result.items} 集（复习 ${result.review_count} · 新内容 ${result.new_count}）`);
+    const result = await api(`/api/plans/${state.planStudentId}/${day}/auto`, { method: 'POST' });
+    toast(result.items
+      ? `已重排 ${result.items} 集 · 目标 ${result.target_min} 分钟` +
+        (result.message ? `（${result.message}）` : '')
+      : (result.message || '没有可排的内容（视频都听过了）'));
     await loadPlan();
-  } catch (err) {
-    toast(err.message);
-  }
-}
-
-async function savePlan() {
-  try {
-    const targetInput = document.getElementById('plan-target');
-    const targetMin = targetInput ? Number(targetInput.value) : 20;
-    await api(`/api/plans/${state.planStudentId}/${state.planDate}`, {
-      method: 'PUT',
-      body: JSON.stringify({
-        target_min: Number.isFinite(targetMin) && targetMin >= 0 ? targetMin : 20,
-        note: null,
-        video_ids: [...state.planSelected],
-      }),
-    });
-    toast('计划已保存');
   } catch (err) {
     toast(err.message);
   }
@@ -456,23 +390,36 @@ async function renderSettings() {
     state.students = await api('/api/students');
     const devices = await api('/api/devices');
 
-    const studentRows = state.students.map((s) => `
-      <div class="item" data-student-row="${s.id}">
+    const weekdayNames = ['一', '二', '三', '四', '五', '六', '日'];
+
+    const studentRows = state.students.map((s) => {
+      const targets = s.weekday_targets || Array(7).fill(s.daily_target_min);
+      const summary = `周一~周日：${targets.join(' / ')} 分钟`;
+      const weekdayInputs = weekdayNames.map((label, index) => `
+        <label class="muted" style="display:flex;align-items:center;gap:3px;font-size:12px">
+          ${label}<input type="number" data-weekday="${index}" min="5" max="120" step="5"
+                        value="${targets[index] ?? s.daily_target_min}" style="width:52px">
+        </label>`).join('');
+
+      return `
+      <div class="item" data-student-row="${s.id}" style="align-items:flex-start">
         <div class="grow" data-view>
           <div class="title">${esc(s.name)}</div>
-          <div class="meta">每日目标 ${s.daily_target_min} 分钟</div>
+          <div class="meta">${summary}</div>
         </div>
-        <div class="grow hidden" data-edit>
+        <div class="grow hidden" data-edit style="width:100%">
           <input type="text" data-edit-name value="${esc(s.name)}" placeholder="姓名"
-                 style="width:38%;margin-right:6px">
-          <input type="number" data-edit-target min="5" max="120" step="5"
-                 value="${s.daily_target_min}" style="width:64px">
-          <span class="muted">分钟</span>
+                 style="width:140px;margin-bottom:8px">
+          <div style="display:flex;gap:8px;flex-wrap:wrap">${weekdayInputs}</div>
+          <div class="muted" style="font-size:12px;margin-top:6px">
+            周一到周日各自的目标分钟数；留空的那天用平均值
+          </div>
         </div>
         <button class="ghost small" data-edit-save="${s.id}" hidden>保存</button>
         <button class="ghost small" data-edit-btn="${s.id}">编辑</button>
         <button class="ghost small" data-pair="${s.id}">配对码</button>
-      </div>`).join('') || '<div class="empty">还没有学生</div>';
+      </div>`;
+    }).join('') || '<div class="empty">还没有学生</div>';
 
     const deviceRows = devices.map((d) => `
       <div class="item">
@@ -549,20 +496,33 @@ async function renderSettings() {
         const row = root.querySelector(`[data-student-row="${el.dataset.editSave}"]`);
         if (!row) return;
         const name = row.querySelector('[data-edit-name]').value.trim();
-        const target = Number(row.querySelector('[data-edit-target]').value);
         if (!name) { toast('姓名不能为空'); return; }
-        if (!Number.isFinite(target) || target < 5 || target > 120) {
+
+        const targets = [...row.querySelectorAll('[data-weekday]')].map((input) => {
+          const value = Number(input.value);
+          return Number.isFinite(value) && value > 0 ? value : null;
+        });
+        const filled = targets.filter((value) => value !== null);
+        if (!filled.length) { toast('至少填一天的目标时长'); return; }
+        if (filled.some((value) => value < 5 || value > 120)) {
           toast('目标时长请填 5–120 分钟');
           return;
         }
+        const average = Math.round(filled.reduce((sum, v) => sum + v, 0) / filled.length);
+        const weekdayTargets = targets.map((value) => (value === null ? average : value));
+
         try {
           const saved = await api(`/api/students/${el.dataset.editSave}`, {
             method: 'PATCH',
-            body: JSON.stringify({ name, daily_target_min: target }),
+            body: JSON.stringify({
+              name,
+              daily_target_min: average,
+              weekday_targets: weekdayTargets,
+            }),
           });
-          toast(saved.plan_rebuilt
-            ? `已保存：每日目标 ${saved.daily_target_min} 分钟，今日计划已重排`
-            : `已保存：每日目标 ${saved.daily_target_min} 分钟`);
+          const summary = (saved.weekday_targets || weekdayTargets).join('/');
+          toast(`已保存：周一~周日 ${summary} 分钟` +
+                (saved.plan_rebuilt ? '，今日计划已重排' : ''));
           await renderSettings();
         } catch (err) { toast(err.message); }
       });

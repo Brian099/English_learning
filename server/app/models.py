@@ -104,6 +104,8 @@ class Student(Base):
     name: Mapped[str] = mapped_column(String(100))
     avatar: Mapped[str | None] = mapped_column(String(200))
     daily_target_min: Mapped[int] = mapped_column(Integer, default=20)
+    # 周一到周日各自的目标分钟数，7 个整数；空表示所有天都用 daily_target_min
+    weekday_targets: Mapped[list | None] = mapped_column(JSON)
     # 当前级别 L1~L5；留空表示由最近完成的内容自动推断
     level: Mapped[str | None] = mapped_column(String(8))
     active: Mapped[bool] = mapped_column(Boolean, default=True)

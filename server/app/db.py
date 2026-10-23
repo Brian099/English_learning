@@ -65,6 +65,7 @@ async def init_db() -> None:
 # 后加的列：老库升级时需要补上，新库 create_all 已经建好
 ADDED_COLUMNS = [
     "ALTER TABLE student ADD COLUMN level VARCHAR(8)",
+    "ALTER TABLE student ADD COLUMN weekday_targets JSON",
     "ALTER TABLE plan ADD COLUMN source VARCHAR(16) DEFAULT 'manual'",
     "ALTER TABLE video ADD COLUMN speech_ms INTEGER DEFAULT 0",
     "ALTER TABLE video ADD COLUMN speech_pct FLOAT DEFAULT 0",

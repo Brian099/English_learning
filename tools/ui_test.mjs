@@ -1,4 +1,4 @@
-// 用 jsdom 真跑 app.js，模拟家长在网页上的操作，断言 DOM 渲染结果。
+﻿// 用 jsdom 真跑 app.js，模拟家长在网页上的操作，断言 DOM 渲染结果。
 // 用法：node tools/ui_test.mjs [--base http://127.0.0.1:8010] [--password dev]
 
 import { createRequire } from 'node:module';
@@ -137,60 +137,31 @@ async function main() {
   doc.getElementById('modal-close').dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
   check('弹层可关闭', doc.getElementById('modal').classList.contains('hidden'));
 
-  console.log('\n5. 计划页');
+  console.log('\n5. 计划页（一周排片视图）');
   doc.querySelector('#tabs button[data-tab="plan"]').dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
-  const planItems = await waitFor(() => {
-    const nodes = doc.querySelectorAll('#plan-list .item');
-    return nodes.length ? nodes : null;
+  const weekCards = await waitFor(() => {
+    const nodes = doc.querySelectorAll('#week-view .card');
+    return nodes.length >= 7 ? nodes : null;
   });
-  check('计划页列出视频', Boolean(planItems), `${planItems ? planItems.length : 0} 集`);
-  check('学生与日期选择器存在',
-    Boolean(doc.getElementById('plan-student')) && Boolean(doc.getElementById('plan-date')));
+  check('显示未来 7 天排片', Boolean(weekCards), `${weekCards ? weekCards.length : 0} 天`);
+  check('有学生选择器', Boolean(doc.getElementById('plan-student')));
+  check('有「重排今日」按钮', Boolean(doc.getElementById('plan-auto')));
+  check('显示周一~周日目标汇总', /周一→周日/.test(textOf(doc.getElementById('plan-hint'))),
+    textOf(doc.getElementById('plan-hint')));
+  const firstDayText = textOf(weekCards ? weekCards[0] : null);
+  check('每天显示目标与实际分钟', /目标\s*\d+\s*分钟/.test(firstDayText) && /实际/.test(firstDayText),
+    firstDayText.slice(0, 40));
+  check('今天有标记', firstDayText.includes('今天') || [...weekCards].some((c) => textOf(c).includes('今天')));
 
-  const boxes = doc.querySelectorAll('#plan-list input[type=checkbox]');
-  const target = [...boxes].find((b) => !b.checked) || boxes[0];
-  target.checked = true;
-  target.dispatchEvent(new window.Event('change', { bubbles: true }));
-  const countText = textOf(doc.getElementById('plan-count'));
-  check('勾选后计数更新', /已选\s*[1-9]/.test(countText), countText);
-
-  // 改目标分钟数后保存，验证不会被硬编码值覆盖
-  const targetField = doc.getElementById('plan-target');
-  check('目标分钟数输入框存在且已填充', Boolean(targetField) && targetField.value !== '',
-    targetField ? `当前 ${targetField.value}` : '');
-  targetField.value = '25';
-
-  // 自动排片按钮
-  const autoBtn = doc.getElementById('plan-auto');
-  check('有「自动排片」按钮', Boolean(autoBtn));
-  autoBtn.dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
+  // 重排今日
+  doc.getElementById('toast').classList.add('hidden');
+  doc.getElementById('plan-auto').dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
   const autoToast = await waitFor(() => {
     const el = doc.getElementById('toast');
     const text = el && !el.classList.contains('hidden') ? textOf(el) : '';
-    return text && (text.includes('已排') || text.includes('内容不足')) ? text : null;
+    return text && (text.includes('已重排') || text.includes('没有可排')) ? text : null;
   });
-  check('自动排片有结果反馈', Boolean(autoToast), autoToast || '');
-  await waitFor(() => doc.querySelectorAll('#plan-list .item').length > 0);
-  check('自动排片后列表刷新', doc.querySelectorAll('#plan-list input[type=checkbox]').length > 0);
-  check('显示计划来源', textOf(doc.getElementById('plan-source')).length > 0,
-    textOf(doc.getElementById('plan-source')));
-
-  // 先清掉上一个 toast，避免读到自动排片的提示
-  doc.getElementById('toast').classList.add('hidden');
-  doc.getElementById('plan-save').dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
-  const toastText = await waitFor(() => {
-    const el = doc.getElementById('toast');
-    return el && !el.classList.contains('hidden') ? textOf(el) : null;
-  });
-  check('保存计划后提示成功', toastText === '计划已保存', toastText || '');
-
-  doc.querySelector('#tabs button[data-tab="dashboard"]').dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
-  const targetApplied = await waitFor(() => {
-    const el = doc.querySelector('#tab-dashboard .card');
-    return el && textOf(el).includes('25 分钟') ? textOf(el) : null;
-  });
-  check('保存的目标分钟数生效（不被硬编码覆盖）', Boolean(targetApplied),
-    targetApplied ? targetApplied.slice(0, 40) : '概览页未显示 25 分钟');
+  check('重排今日有反馈', Boolean(autoToast), autoToast || '');
 
   console.log('\n6. 设置页');
   doc.querySelector('#tabs button[data-tab="settings"]').dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
@@ -201,14 +172,20 @@ async function main() {
   check('有扫描目录按钮', Boolean(doc.getElementById('do-scan')));
 
   // 学生管理：改每日目标时长
+  // 学生管理：按周一到周日设置目标
   const editBtn = doc.querySelector('#tab-settings [data-edit-btn]');
   check('学生行有编辑按钮', Boolean(editBtn));
   const metaBefore = textOf(doc.querySelector('#tab-settings [data-student-row] [data-view] .meta'));
+  check('列表显示周一~周日目标', /周一~周日/.test(metaBefore), metaBefore);
   editBtn.dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
   const editBox = doc.querySelector('#tab-settings [data-student-row] [data-edit]');
   check('点编辑出现输入框', !editBox.classList.contains('hidden'));
-  const editTargetField = doc.querySelector('#tab-settings [data-edit-target]');
-  editTargetField.value = '35';
+  const weekdayInputs = doc.querySelectorAll('#tab-settings [data-weekday]');
+  check('有 7 个星期输入框', weekdayInputs.length === 7, `${weekdayInputs.length} 个`);
+
+  const setAll = (value) => [...doc.querySelectorAll('#tab-settings [data-weekday]')]
+    .forEach((input) => { input.value = String(value); });
+  setAll(35);
   doc.querySelector('#tab-settings [data-edit-save]')
     .dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
   const metaAfter = await waitFor(() => {
@@ -217,16 +194,18 @@ async function main() {
     return text.includes('35') ? text : null;
   });
   check('保存后列表显示新目标', Boolean(metaAfter), `${metaBefore} → ${metaAfter || '未更新'}`);
+
   // 还原
-  const editBtn2 = doc.querySelector('#tab-settings [data-edit-btn]');
-  editBtn2.dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
-  doc.querySelector('#tab-settings [data-edit-target]').value = '20';
+  doc.querySelector('#tab-settings [data-edit-btn]')
+    .dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
+  setAll(20);
   doc.querySelector('#tab-settings [data-edit-save]')
     .dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
   await waitFor(() => {
     const el = doc.querySelector('#tab-settings [data-student-row] [data-view] .meta');
     return el && textOf(el).includes('20');
   });
+
 
   // 生成配对码
   doc.querySelector('#tab-settings [data-pair]').dispatchEvent(new window.MouseEvent('click', { bubbles: true }));

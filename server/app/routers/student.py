@@ -8,7 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from ..config import settings
 from ..db import get_db
 from ..models import DailyStat, Device, Plan, PlanItem, PlayEvent, Student, Video
-from ..scheduler import build_daily_plan
+from ..scheduler import build_daily_plan, target_for_day
 from ..security import current_device
 
 router = APIRouter(prefix="/api", tags=["student"])
@@ -27,7 +27,12 @@ async def me(device: Device = Depends(current_device), db: AsyncSession = Depend
     if student is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "学生不存在")
     return {
-        "student": {"id": student.id, "name": student.name, "daily_target_min": student.daily_target_min},
+        "student": {
+            "id": student.id,
+            "name": student.name,
+            "daily_target_min": student.daily_target_min,
+            "weekday_targets": student.weekday_targets,
+        },
         "device": {"id": device.id, "name": device.name, "platform": device.platform},
     }
 
@@ -59,8 +64,7 @@ async def student_today(
                 day=day,
                 target_min=built["target_min"],
                 source="auto",
-                note=f"自动排片：复习 {built['review_count']} · 新内容 {built['new_count']}"
-                     f" · 重复 {built['repeat_count']}",
+                note=f"自动排片：{built['new_count']} 集 · 当天目标 {built['target_min']} 分钟",
             )
             db.add(plan)
             await db.flush()
@@ -145,7 +149,7 @@ async def student_today(
 
     stat = await db.get(DailyStat, (student.id, day))
     effective_min = round((stat.effective_ms if stat else 0) / 60000, 1)
-    target_min = plan.target_min if plan else student.daily_target_min
+    target_min = plan.target_min if plan else target_for_day(student, day)
 
     return {
         "student": {"id": student.id, "name": student.name},

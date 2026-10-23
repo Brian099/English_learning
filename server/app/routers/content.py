@@ -15,7 +15,7 @@ from ..db import get_db
 from ..models import Plan, PlanItem, Series, Student, Video
 from ..pipeline import run_ingest
 from ..scan import scan_media, scan_preview
-from ..scheduler import build_daily_plan
+from ..scheduler import build_daily_plan, target_for_day
 from ..security import read_auth, require_parent
 
 router = APIRouter(prefix="/api", tags=["content"])
@@ -38,6 +38,8 @@ def _has_audio(video: Video) -> bool:
 class StudentBody(BaseModel):
     name: str
     daily_target_min: int = 20
+    # 周一到周日各自的目标分钟数（7 个）；不传表示所有天都用 daily_target_min
+    weekday_targets: list[int] | None = None
 
 
 class VideoPatch(BaseModel):
@@ -58,6 +60,7 @@ async def list_students(db: AsyncSession = Depends(get_db)) -> list[dict]:
             "id": s.id,
             "name": s.name,
             "daily_target_min": s.daily_target_min,
+            "weekday_targets": s.weekday_targets,
             "active": s.active,
         }
         for s in rows
@@ -67,10 +70,25 @@ async def list_students(db: AsyncSession = Depends(get_db)) -> list[dict]:
 @router.post("/students", dependencies=[Depends(require_parent)])
 async def create_student(body: StudentBody, db: AsyncSession = Depends(get_db)) -> dict:
     student = Student(name=body.name, daily_target_min=body.daily_target_min)
+    if body.weekday_targets:
+        student.weekday_targets = _clean_weekday_targets(body.weekday_targets,
+                                                         body.daily_target_min)
     db.add(student)
     await db.commit()
     await db.refresh(student)
     return {"id": student.id, "name": student.name}
+
+
+def _clean_weekday_targets(raw: list[int], default: int) -> list[int]:
+    """规整成 7 个合法分钟数，越界/缺失用默认值补。"""
+    out = []
+    for index in range(7):
+        try:
+            value = int(raw[index])
+        except (IndexError, TypeError, ValueError):
+            value = default
+        out.append(min(180, max(5, value)) if value else default)
+    return out
 
 
 @router.patch("/students/{student_id}", dependencies=[Depends(require_parent)])
@@ -82,12 +100,18 @@ async def patch_student(
         raise HTTPException(status.HTTP_404_NOT_FOUND, "学生不存在")
 
     target_changed = student.daily_target_min != body.daily_target_min
+    weekday_changed = False
+    if body.weekday_targets is not None:
+        cleaned = _clean_weekday_targets(body.weekday_targets, body.daily_target_min)
+        weekday_changed = (student.weekday_targets or None) != cleaned
+        student.weekday_targets = cleaned
+
     student.name = body.name
     student.daily_target_min = body.daily_target_min
 
     # 改了目标时长，今天的计划要跟着变，否则学生端还显示旧数字
     rebuilt = False
-    if target_changed:
+    if target_changed or weekday_changed:
         rebuilt = await _sync_today_plan(db, student)
 
     await db.commit()
@@ -95,6 +119,7 @@ async def patch_student(
         "id": student.id,
         "name": student.name,
         "daily_target_min": student.daily_target_min,
+        "weekday_targets": student.weekday_targets,
         "plan_rebuilt": rebuilt,
     }
 
@@ -113,12 +138,12 @@ async def _sync_today_plan(db: AsyncSession, student: Student) -> bool:
         return False
 
     if plan.source != "auto":
-        plan.target_min = student.daily_target_min
+        plan.target_min = target_for_day(student, day)
         return False
 
     built = await build_daily_plan(db, student, day)
     if not built["items"]:
-        plan.target_min = student.daily_target_min
+        plan.target_min = built["target_min"]
         return False
 
     await db.execute(delete(PlanItem).where(PlanItem.plan_id == plan.id))
@@ -132,8 +157,7 @@ async def _sync_today_plan(db: AsyncSession, student: Student) -> bool:
             )
         )
     plan.target_min = built["target_min"]
-    plan.note = (f"自动排片：复习 {built['review_count']} · 新内容 {built['new_count']}"
-                 f" · 重复 {built['repeat_count']}")
+    plan.note = f"自动排片：{built['new_count']} 集 · 当天目标 {built['target_min']} 分钟"
     return True
 
 

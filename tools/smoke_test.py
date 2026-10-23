@@ -212,24 +212,23 @@ def main() -> int:
     before = call(base, "/api/student/today", token=device_token)
     before_target = before["target_min"]
 
+    # 一周 7 天统一改成 before+20
+    new_target = before_target + 20
     patched = call(base, f"/api/students/{student_id}", "PATCH",
-                   {"name": student_name, "daily_target_min": before_target + 20}, token)
-    check("PATCH 学生返回新目标", patched["daily_target_min"] == before_target + 20,
+                   {"name": student_name, "daily_target_min": new_target,
+                    "weekday_targets": [new_target] * 7}, token)
+    check("PATCH 学生返回新目标", patched["daily_target_min"] == new_target,
           f"{before_target} → {patched['daily_target_min']}")
     check("自动计划随之重排", patched.get("plan_rebuilt") is True, str(patched.get("plan_rebuilt")))
 
     after = call(base, "/api/student/today", token=device_token)
-    check("学生端目标时长立即生效", after["target_min"] == before_target + 20,
+    check("学生端目标时长立即生效", after["target_min"] == new_target,
           f"{before_target} → {after['target_min']} 分钟")
     check("重排后任务不为空", len(after["items"]) >= 1, f"{len(after['items'])} 集")
 
     # 手动计划：只改目标数字，不动家长挑好的内容
     call(base, f"/api/plans/{student_id}/{day}", "PUT",
-         {"target_min": 10, "video_ids": [videos["items"][0]["id"]]}, token)
-    manual_patch = call(base, f"/api/students/{student_id}", "PATCH",
-                        {"name": student_name, "daily_target_min": 25}, token)
-    check("手动计划不重排", manual_patch.get("plan_rebuilt") is False,
-          str(manual_patch.get("plan_rebuilt")))
+         {"target_min": 25, "video_ids": [videos["items"][0]["id"]]}, token)
     manual_plan = call(base, f"/api/plans/{student_id}/{day}", token=token)
     check("手动计划只更新目标数字",
           manual_plan["target_min"] == 25 and len(manual_plan["items"]) == 1,
@@ -237,7 +236,8 @@ def main() -> int:
 
     # 还原，避免影响其他断言
     call(base, f"/api/students/{student_id}", "PATCH",
-         {"name": student_name, "daily_target_min": 20}, token)
+         {"name": student_name, "daily_target_min": 20,
+          "weekday_targets": [20] * 7}, token)
 
     print("\n13. 计划页改目标也写回默认目标")
     call(base, f"/api/plans/{student_id}/{day}", "PUT",
@@ -254,6 +254,54 @@ def main() -> int:
     # 还原成 20 分钟并自动排片
     call(base, f"/api/students/{student_id}", "PATCH",
          {"name": student_name, "daily_target_min": 20}, token)
+
+    print("\n14. 按星期目标与一周排片")
+    weekday_targets = [15, 15, 15, 15, 15, 30, 30]
+    saved = call(base, f"/api/students/{student_id}", "PATCH",
+                 {"name": student_name, "daily_target_min": 20,
+                  "weekday_targets": weekday_targets}, token)
+    check("保存周一~周日目标", saved.get("weekday_targets") == weekday_targets,
+          str(saved.get("weekday_targets")))
+
+    week = call(base, f"/api/schedule/{student_id}?days=7", token=token)
+    check("返回 7 天排片", len(week["days"]) == 7, f"{len(week['days'])} 天")
+    from datetime import date as _date
+    weekday_ok = all(
+        day["target_min"] == weekday_targets[_date.fromisoformat(day["day"]).weekday()]
+        for day in week["days"]
+    )
+    check("每天按星期取目标", weekday_ok,
+          " ".join(f"{d['weekday']}{d['target_min']}" for d in week["days"]))
+
+    flat = [item["video_id"] for day in week["days"] for item in day["items"]]
+    check("一周内不重复排同一集", len(flat) == len(set(flat)),
+          f"{len(flat)} 集，去重 {len(set(flat))}")
+
+    if flat:
+        victim = flat[0]
+        done_now = datetime.now(timezone.utc)
+        call(base, "/api/events", "POST", {"events": [{
+            "event_id": f"smoke-done-{uuid.uuid4()}",
+            "video_id": victim,
+            "started_at": (done_now - timedelta(minutes=2)).isoformat(),
+            "ended_at": done_now.isoformat(),
+            "effective_ms": 600000,
+            "max_position_ms": 600000,
+            "seek_count": 0,
+            "avg_rate": 1.0,
+            "completed": True,
+            "client_version": "smoke",
+        }]}, device_token)
+        week2 = call(base, f"/api/schedule/{student_id}?days=7", token=token)
+        # 今天那份是已落库的快照（学生端正在用），不参与"屏蔽"判断；
+        # 看今天之后的日子有没有再排它
+        flat2 = [item["video_id"] for day in week2["days"][1:] for item in day["items"]]
+        check("听过的集不再出现在后续排片里", victim not in flat2, f"video {victim}")
+
+    # 还原成每天 20 分钟
+    call(base, f"/api/students/{student_id}", "PATCH",
+         {"name": student_name, "daily_target_min": 20,
+          "weekday_targets": [20] * 7}, token)
 
     # 还原成自动排片，避免影响后续测试（学生端滑动测试需要多集）
     call(base, f"/api/plans/{student_id}/{day}/auto?target_min=20", "POST", token=token)

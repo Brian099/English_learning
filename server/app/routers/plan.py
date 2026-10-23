@@ -1,22 +1,133 @@
-from datetime import date
+from datetime import date, datetime, timedelta
+from zoneinfo import ZoneInfo
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel, Field
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from ..config import settings
 from ..db import get_db
 from ..models import Plan, PlanItem, Student, Video
-from ..scheduler import build_daily_plan
+from ..scheduler import WEEKDAYS_CN, build_daily_plan, build_week, target_for_day
 from ..security import read_auth, require_parent
 
 router = APIRouter(prefix="/api", tags=["plan"])
+
+TZ = ZoneInfo(settings.tz)
+
+
+def _today() -> date:
+    return datetime.now(TZ).date()
 
 
 class PlanBody(BaseModel):
     target_min: int = Field(default=20, ge=0, le=180)
     note: str | None = None
     video_ids: list[int] = Field(default_factory=list)
+
+
+@router.get("/schedule/{student_id}")
+async def week_schedule(
+    student_id: int,
+    days: int = Query(7, ge=1, le=14),
+    start: date | None = None,
+    _auth: dict = Depends(read_auth),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """未来 N 天的排片预览（默认从今天起 7 天）。
+
+    今天优先用已落库的计划（学生端看到的就是这份），
+    以后的日子按同样规则预演，同一条内容不会在两天里重复。
+    """
+    student = await db.get(Student, student_id)
+    if student is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "学生不存在")
+
+    start_day = start or _today()
+    week = await build_week(db, student, start_day, days)
+
+    # 补标题
+    all_ids = {item["video_id"] for day in week for item in day["items"]}
+    titles: dict[int, tuple[str, str | None]] = {}
+    if all_ids:
+        rows = (
+            await db.execute(
+                select(Video.id, Video.title, Video.level).where(Video.id.in_(all_ids))
+            )
+        ).all()
+        titles = {row.id: (row.title, row.level) for row in rows}
+
+    # 今天若有落库的计划，用它覆盖（学生端实际看到的那份）
+    today = _today()
+    saved = (
+        await db.execute(select(Plan).where(Plan.student_id == student_id, Plan.day == today))
+    ).scalar_one_or_none()
+    if saved is not None:
+        rows = (
+            await db.execute(
+                select(PlanItem, Video)
+                .join(Video, Video.id == PlanItem.video_id)
+                .where(PlanItem.plan_id == saved.id)
+                .order_by(PlanItem.order_index)
+            )
+        ).all()
+        for day in week:
+            if day["day"] == today.isoformat():
+                day["target_min"] = saved.target_min
+                day["items"] = [
+                    {
+                        "video_id": video.id,
+                        "title": video.title,
+                        "level": video.level,
+                        "duration_ms": video.duration_ms,
+                        "order": item.order_index,
+                    }
+                    for item, video in rows
+                ]
+                day["total_min"] = round(
+                    sum(v.duration_ms or 0 for _, v in rows) / 60_000, 1
+                )
+                day["saved"] = True
+
+    for day in week:
+        day.setdefault("saved", False)
+        for item in day["items"]:
+            if item.get("title") is None:
+                title, level = titles.get(item["video_id"], ("（已删除）", None))
+                item["title"] = title
+                item["level"] = level
+        day["weekday"] = WEEKDAYS_CN[date.fromisoformat(day["day"]).weekday()]
+        day["is_today"] = day["day"] == today.isoformat()
+
+    return {
+        "student_id": student_id,
+        "start": start_day.isoformat(),
+        "weekday_targets": _weekday_targets_of(student),
+        "days": week,
+    }
+
+
+def _weekday_targets_of(student: Student) -> list[int]:
+    raw = student.weekday_targets or []
+    default = student.daily_target_min or 20
+    out = []
+    for index in range(7):
+        try:
+            value = int(raw[index])
+        except (IndexError, TypeError, ValueError):
+            value = default
+        out.append(value if value > 0 else default)
+    return out
+
+
+def _set_weekday_target(student: Student, day: date, value: int) -> None:
+    """把某一天的新目标写进对应星期的那一格。"""
+    targets = list(student.weekday_targets or [student.daily_target_min or 20] * 7)
+    if len(targets) < 7:
+        targets += [student.daily_target_min or 20] * (7 - len(targets))
+    targets[day.weekday()] = value
+    student.weekday_targets = targets
 
 
 @router.get("/plans/{student_id}/{day}")
@@ -68,10 +179,7 @@ async def auto_plan(
     target_min: int | None = None,
     db: AsyncSession = Depends(get_db),
 ) -> dict:
-    """自动排片：复习到期 + 难度匹配 + 时长装填，覆盖该天计划。
-
-    家长之后仍可以在页面上手动调整（手动保存会把 source 改回 manual）。
-    """
+    """自动排片：按当天的星期目标 + 难度匹配 + 时长装填，只排没听过的内容。"""
     student = await db.get(Student, student_id)
     if student is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "学生不存在")
@@ -84,7 +192,7 @@ async def auto_plan(
             "level": built["level"],
             "source": "auto",
             "items": [],
-            "message": "没有可排的内容（视频库为空，或当天都已完成）",
+            "message": "没有可排的内容（视频都听过了，或视频库为空）",
         }
 
     plan = (
@@ -96,11 +204,11 @@ async def auto_plan(
         await db.flush()
     plan.target_min = built["target_min"]
     plan.source = "auto"
-    # 家长显式指定了目标，就同步成默认目标，避免"设置页还是旧数字"
+    # 家长显式指定了目标，就写回该星期的那一格，保证设置页/概览页/学生端一致
     if target_min:
+        _set_weekday_target(student, day, built["target_min"])
         student.daily_target_min = built["target_min"]
-    plan.note = (f"自动排片：复习 {built['review_count']} · 新内容 {built['new_count']}"
-                 f" · 重复 {built['repeat_count']}")
+    plan.note = f"自动排片：{built['new_count']} 集 · {WEEKDAYS_CN[day.weekday()]}目标 {built['target_min']} 分钟"
 
     await db.execute(delete(PlanItem).where(PlanItem.plan_id == plan.id))
     for item in built["items"]:
@@ -161,7 +269,8 @@ async def put_plan(
     plan.target_min = body.target_min
     plan.note = body.note
     plan.source = "manual"   # 家长手动改过，就不再算自动排片
-    # 计划页改的目标也写回默认目标，保证设置页、概览页、学生端显示一致
+    # 计划页改的目标也写回该星期的那一格，保证各处显示一致
+    _set_weekday_target(student, day, body.target_min)
     student.daily_target_min = body.target_min
 
     await db.execute(delete(PlanItem).where(PlanItem.plan_id == plan.id))
