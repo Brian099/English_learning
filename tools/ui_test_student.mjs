@@ -317,6 +317,25 @@ async function main() {
   const queueLeft = window.localStorage.getItem('event_queue');
   check('上报后队列已清空', !queueLeft || JSON.parse(queueLeft).length === 0, queueLeft || '空');
 
+  console.log('\n11b. 返回不依赖网络');
+  // 再进一次播放器
+  doc.querySelector('#task-list .task[data-index="0"]')
+    .dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
+  await waitFor(() => !doc.getElementById('screen-player').classList.contains('hidden'));
+  // 让"刷新今日任务"这个请求失败，模拟断网/接口异常
+  const realFetch = window.fetch;
+  window.fetch = (input, init) => {
+    if (String(input).includes('/api/student/today')) {
+      return Promise.reject(new Error('network down'));
+    }
+    return realFetch(input, init);
+  };
+  doc.getElementById('player-back').dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
+  const backAnyway = await waitFor(() => !doc.getElementById('screen-home').classList.contains('hidden'));
+  check('刷新接口失败也能返回列表', Boolean(backAnyway));
+  window.fetch = realFetch;
+  await sleep(300);
+
   console.log('\n12. 记录页');
   doc.querySelector('.tab[data-view="history"]').dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
   const historyRows = await waitFor(() => {

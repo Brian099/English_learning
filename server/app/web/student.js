@@ -168,12 +168,12 @@ document.getElementById('start-btn').addEventListener('click', () => {
 });
 
 async function loadHome() {
+  showScreen('home');      // 先切界面，后面拉数据失败也不至于卡在别处
   try {
     const data = await api('/api/student/today');
     state.today = data;
     state.student = data.student;
     renderHome();
-    showScreen('home');
     await flushQueue();
   } catch (err) {
     if (!state.token) {
@@ -261,9 +261,19 @@ let leavingPlayer = false;
 document.getElementById('player-back').addEventListener('click', async () => {
   if (leavingPlayer) return;          // 连点两下不要重复结算
   leavingPlayer = true;
+
+  // 先切回列表：上报、刷新任何一步失败都不能把用户卡在播放页
+  showScreen('home');
+
   try {
     await finalizeCurrent(false);
+  } catch (err) {
+    console.warn('结算上报失败（不影响返回）', err);
+  }
+  try {
     await loadHome();
+  } catch (err) {
+    console.warn('刷新列表失败', err);
   } finally {
     leavingPlayer = false;
   }
@@ -834,7 +844,7 @@ async function finalizeSession(session, item, completedByEnding) {
 
   if (session.effectiveMs >= 1000) {
     state.queue.push(event);
-    localStorage.setItem('event_queue', JSON.stringify(state.queue));
+    writeQueue(state.queue);
   }
   if (completed) {
     const target0 = (state.today?.items || []).find((i) => i.video_id === session.videoId);
@@ -852,8 +862,28 @@ async function finalizeCurrent(completedByEnding) {
   await finalizeSession(session, item, completedByEnding);
 }
 
+function readQueue() {
+  try {
+    const raw = localStorage.getItem('event_queue');
+    const parsed = raw ? JSON.parse(raw) : [];
+    return Array.isArray(parsed) ? parsed : [];
+  } catch (err) {
+    console.warn('本地事件队列损坏，已重置', err);
+    return [];
+  }
+}
+
+function writeQueue(queue) {
+  try {
+    if (queue.length) localStorage.setItem('event_queue', JSON.stringify(queue));
+    else localStorage.removeItem('event_queue');
+  } catch (err) {
+    console.warn('本地事件队列写入失败', err);
+  }
+}
+
 async function flushQueue() {
-  state.queue = JSON.parse(localStorage.getItem('event_queue') || '[]');
+  state.queue = readQueue();
   if (!state.queue.length) return;
   if (typeof navigator !== 'undefined' && navigator.onLine === false) return;
   try {
@@ -862,7 +892,7 @@ async function flushQueue() {
       body: JSON.stringify({ events: state.queue }),
     });
     state.queue = [];
-    localStorage.removeItem('event_queue');
+    writeQueue([]);
   } catch (err) { /* 留着下次再传 */ }
 }
 
