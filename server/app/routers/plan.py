@@ -96,6 +96,9 @@ async def auto_plan(
         await db.flush()
     plan.target_min = built["target_min"]
     plan.source = "auto"
+    # 家长显式指定了目标，就同步成默认目标，避免"设置页还是旧数字"
+    if target_min:
+        student.daily_target_min = built["target_min"]
     plan.note = (f"自动排片：复习 {built['review_count']} · 新内容 {built['new_count']}"
                  f" · 重复 {built['repeat_count']}")
 
@@ -158,6 +161,8 @@ async def put_plan(
     plan.target_min = body.target_min
     plan.note = body.note
     plan.source = "manual"   # 家长手动改过，就不再算自动排片
+    # 计划页改的目标也写回默认目标，保证设置页、概览页、学生端显示一致
+    student.daily_target_min = body.target_min
 
     await db.execute(delete(PlanItem).where(PlanItem.plan_id == plan.id))
     for index, video_id in enumerate(body.video_ids):

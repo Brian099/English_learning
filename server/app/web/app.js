@@ -306,6 +306,7 @@ async function renderPlan() {
           <input type="date" id="plan-date" value="${state.planDate}">
           <label class="muted" style="display:flex;align-items:center;gap:6px">
             目标 <input type="number" id="plan-target" min="0" max="180" style="width:72px">
+            <span style="font-size:12px">分钟（同时更新默认目标）</span>
           </label>
         </div>
       </div>

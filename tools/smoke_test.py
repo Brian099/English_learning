@@ -239,6 +239,22 @@ def main() -> int:
     call(base, f"/api/students/{student_id}", "PATCH",
          {"name": student_name, "daily_target_min": 20}, token)
 
+    print("\n13. 计划页改目标也写回默认目标")
+    call(base, f"/api/plans/{student_id}/{day}", "PUT",
+         {"target_min": 30, "video_ids": [videos["items"][0]["id"]]}, token)
+    after_put = call(base, "/api/students", token=token)[0]
+    check("手动存计划写回默认目标", after_put["daily_target_min"] == 30,
+          f"默认目标 {after_put['daily_target_min']} 分钟")
+
+    call(base, f"/api/plans/{student_id}/{day}/auto?target_min=15", "POST", token=token)
+    after_auto = call(base, "/api/students", token=token)[0]
+    check("自动排片写回默认目标", after_auto["daily_target_min"] == 15,
+          f"默认目标 {after_auto['daily_target_min']} 分钟")
+
+    # 还原成 20 分钟并自动排片
+    call(base, f"/api/students/{student_id}", "PATCH",
+         {"name": student_name, "daily_target_min": 20}, token)
+
     # 还原成自动排片，避免影响后续测试（学生端滑动测试需要多集）
     call(base, f"/api/plans/{student_id}/{day}/auto?target_min=20", "POST", token=token)
 
