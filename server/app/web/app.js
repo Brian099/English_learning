@@ -1,4 +1,4 @@
-'use strict';
+﻿'use strict';
 
 const state = {
   token: localStorage.getItem('token') || '',
@@ -88,9 +88,9 @@ function applyRole() {
   });
   const who = document.getElementById('who');
   if (who) {
-    who.textContent = state.role
-      ? `${state.family || ''} · ${state.role === 'owner' ? '主账号' : '子账号'}`
-      : '';
+    who.textContent = state.role === 'owner'
+      ? '系统管理员'
+      : (state.family ? `${state.family} · 家庭账号` : '');
   }
   const first = [...document.querySelectorAll('#tabs button[data-tab]')]
     .find((b) => !b.classList.contains('hidden'));
@@ -176,11 +176,10 @@ async function renderOwnerOverview(root) {
 
     root.innerHTML = `
       <div class="card">
-        <h2>家庭与账号</h2>
+        <h2>家庭</h2>
         <div class="stats">
-          <div class="stat"><b>${f.count}</b><span>家庭</span></div>
-          <div class="stat"><b>${f.accounts}</b><span>账号（主 ${f.owners} / 子 ${f.members}）</span></div>
-          <div class="stat"><b>${f.students}</b><span>学生</span></div>
+          <div class="stat"><b>${f.count}</b><span>家庭数</span></div>
+          <div class="stat"><b>${f.students}</b><span>学生数</span></div>
         </div>
       </div>
 
@@ -489,92 +488,114 @@ async function autoPlan() {
   }
 }
 
-/* ------------------------------------------------------------- 账号（主账号） */
+/* ------------------------------------------------------------- 家庭管理 */
 
+/** 家庭管理：一个家庭 = 一个登录账号 */
 async function renderAccounts() {
   const root = document.getElementById('tab-accounts');
   root.innerHTML = '<div class="empty">加载中…</div>';
   try {
-    const accounts = await api('/api/accounts');
-    const rows = accounts.map((a) => `
-      <div class="item">
-        <div class="grow">
-          <div class="title">${esc(a.display_name || a.username)}
-            <span class="muted small">${a.role === 'owner' ? '主账号' : '子账号'}</span></div>
-          <div class="meta">用户名 ${esc(a.username)}${a.active ? '' : ' · 已停用'}</div>
+    const families = await api('/api/families');
+    const rows = families.map((f) => `
+      <div class="item" data-family-row="${f.id}" style="align-items:flex-start">
+        <div class="grow" data-view>
+          <div class="title">${esc(f.name)}
+            ${f.active ? '' : '<span class="badge l5">已停用</span>'}</div>
+          <div class="meta">用户名 ${esc(f.username)} · ${f.students} 个学生</div>
         </div>
-        ${a.role === 'owner' ? '' : `
-          <button class="btn btn-sm btn-outline-secondary" data-reset="${a.id}" data-name="${esc(a.username)}">改密码</button>
-          <button class="btn btn-sm btn-outline-secondary" data-del="${a.id}">删除</button>`}
-      </div>`).join('') || '<div class="empty">还没有子账号</div>';
+        <div class="grow hidden" data-edit style="width:100%">
+          <div class="toolbar">
+            <input type="text" class="form-control form-control-sm" data-edit-name
+                   value="${esc(f.name)}" placeholder="家庭名称" style="max-width:200px">
+            <input type="password" class="form-control form-control-sm" data-edit-password
+                   placeholder="新密码（留空不改）" style="max-width:200px">
+            <button class="btn btn-sm btn-primary" data-save="${f.id}">保存</button>
+            <button class="btn btn-sm btn-outline-secondary" data-cancel="${f.id}">取消</button>
+          </div>
+        </div>
+        <button class="btn btn-sm btn-outline-secondary" data-edit-btn="${f.id}">编辑</button>
+        <button class="btn btn-sm btn-outline-secondary" data-del="${f.id}">删除</button>
+      </div>`).join('') || '<div class="empty">还没有家庭</div>';
 
     root.innerHTML = `
       <div class="card">
-        <h2>家庭</h2>
-        <div class="toolbar">
-          <input type="text" id="family-name" class="form-control" value="${esc(state.family)}" placeholder="家庭名称">
-          <button id="save-family" class="btn btn-primary">保存</button>
-        </div>
-        <p class="muted" style="margin:10px 0 0">
-          一个账号对应一个家庭。主账号负责家庭设置、子账号和内容维护；
-          子账号负责学生和计划。
-        </p>
+        <h2>家庭列表</h2>
+        <div class="list">${rows}</div>
       </div>
       <div class="card">
-        <h2>账号</h2>
-        <div class="list">${rows}</div>
-        <div class="toolbar" style="margin-top:12px">
-          <input type="text" id="new-username" class="form-control" placeholder="子账号用户名">
-          <input type="password" id="new-password" class="form-control" placeholder="密码（≥6 位）">
-          <button id="add-account" class="btn btn-primary">添加子账号</button>
+        <h2>新增家庭</h2>
+        <div class="toolbar">
+          <input type="text" id="new-family-name" class="form-control" placeholder="家庭名称">
+          <input type="text" id="new-family-user" class="form-control" placeholder="用户名（≥3 位）">
+          <input type="password" id="new-family-pass" class="form-control" placeholder="密码（≥6 位）">
+          <button id="add-family" class="btn btn-primary">新增家庭</button>
         </div>
+        <p class="muted" style="margin:10px 0 0">
+          一个家庭对应一个登录账号。家庭账号登录后只能管理自己家庭的学生和计划。
+        </p>
       </div>`;
 
-    document.getElementById('save-family').addEventListener('click', async () => {
-      const name = document.getElementById('family-name').value.trim();
-      if (!name) return;
+    document.getElementById('add-family').addEventListener('click', async () => {
+      const name = document.getElementById('new-family-name').value.trim();
+      const username = document.getElementById('new-family-user').value.trim();
+      const password = document.getElementById('new-family-pass').value;
+      if (!name || !username) { toast('家庭名称和用户名都要填'); return; }
+      if (password.length < 6) { toast('密码至少 6 位'); return; }
       try {
-        const saved = await api('/api/family', {
-          method: 'PATCH', body: JSON.stringify({ name }),
+        await api('/api/families', {
+          method: 'POST', body: JSON.stringify({ name, username, password }),
         });
-        state.family = saved.name;
-        localStorage.setItem('family', saved.name);
-        applyRole();
-        toast('已保存');
-      } catch (err) { toast(err.message); }
-    });
-
-    document.getElementById('add-account').addEventListener('click', async () => {
-      const username = document.getElementById('new-username').value.trim();
-      const password = document.getElementById('new-password').value;
-      if (!username || password.length < 6) { toast('用户名必填，密码至少 6 位'); return; }
-      try {
-        await api('/api/accounts', {
-          method: 'POST', body: JSON.stringify({ username, password }),
-        });
-        toast('已添加子账号');
+        toast('已新增家庭');
         renderAccounts();
       } catch (err) { toast(err.message); }
     });
 
-    root.querySelectorAll('[data-reset]').forEach((el) => {
+    root.querySelectorAll('[data-edit-btn]').forEach((el) => {
+      el.addEventListener('click', () => {
+        const row = root.querySelector(`[data-family-row="${el.dataset.editBtn}"]`);
+        if (!row) return;
+        const editing = !row.querySelector('[data-edit]').classList.contains('hidden');
+        row.querySelector('[data-view]').classList.toggle('hidden', !editing);
+        row.querySelector('[data-edit]').classList.toggle('hidden', editing);
+        el.classList.toggle('hidden', !editing);
+      });
+    });
+
+    root.querySelectorAll('[data-cancel]').forEach((el) => {
+      el.addEventListener('click', () => {
+        const row = root.querySelector(`[data-family-row="${el.dataset.cancel}"]`);
+        if (!row) return;
+        row.querySelector('[data-view]').classList.remove('hidden');
+        row.querySelector('[data-edit]').classList.add('hidden');
+        row.querySelector('[data-edit-btn]').classList.remove('hidden');
+      });
+    });
+
+    root.querySelectorAll('[data-save]').forEach((el) => {
       el.addEventListener('click', async () => {
-        const pwd = prompt(`给「${el.dataset.name}」设置新密码（至少 6 位）`);
-        if (!pwd) return;
+        const row = root.querySelector(`[data-family-row="${el.dataset.save}"]`);
+        if (!row) return;
+        const name = row.querySelector('[data-edit-name]').value.trim();
+        const password = row.querySelector('[data-edit-password]').value;
+        if (!name) { toast('家庭名称不能为空'); return; }
+        if (password && password.length < 6) { toast('密码至少 6 位'); return; }
+        const body = { name };
+        if (password) body.password = password;
         try {
-          await api(`/api/accounts/${el.dataset.reset}`, {
-            method: 'PATCH', body: JSON.stringify({ password: pwd }),
+          await api(`/api/families/${el.dataset.save}`, {
+            method: 'PATCH', body: JSON.stringify(body),
           });
-          toast('密码已更新');
+          toast(password ? '已保存，密码已更新' : '已保存');
+          renderAccounts();
         } catch (err) { toast(err.message); }
       });
     });
 
     root.querySelectorAll('[data-del]').forEach((el) => {
       el.addEventListener('click', async () => {
-        if (!confirm('确定删除这个子账号？')) return;
+        if (!confirm('删除这个家庭？该家庭的学生、计划和播放记录会一起删除，无法恢复。')) return;
         try {
-          await api(`/api/accounts/${el.dataset.del}`, { method: 'DELETE' });
+          await api(`/api/families/${el.dataset.del}`, { method: 'DELETE' });
           toast('已删除');
           renderAccounts();
         } catch (err) { toast(err.message); }

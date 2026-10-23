@@ -75,7 +75,12 @@ async function main() {
     memberToken = (await apiAs(null, '/api/admin/login', 'POST',
       { username: 'ui-member', password: 'ui-member-123' })).token;
   }
-  const students = await apiAs(memberToken, '/api/students');
+  // 家庭账号各自独立，测试家庭里没有学生就先建一个
+  let students = await apiAs(memberToken, '/api/students');
+  if (!students.length) {
+    await apiAs(memberToken, '/api/students', 'POST', { name: '测试娃', daily_target_min: 20 });
+    students = await apiAs(memberToken, '/api/students');
+  }
   if (!students.length) throw new Error('没有学生，请先建一个');
   const studentId = students[0].id;
 

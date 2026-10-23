@@ -3,7 +3,7 @@ from datetime import UTC, datetime, timedelta
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, Field
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..config import settings
@@ -44,22 +44,6 @@ class PairBody(BaseModel):
     platform: str | None = None
 
 
-class AccountBody(BaseModel):
-    username: str
-    password: str
-    display_name: str | None = None
-
-
-class AccountPatch(BaseModel):
-    display_name: str | None = None
-    password: str | None = None
-    active: bool | None = None
-
-
-class FamilyBody(BaseModel):
-    name: str
-
-
 # ------------------------------------------------------------------ 登录
 
 @router.post("/admin/login")
@@ -96,50 +80,63 @@ async def me(account: Account = Depends(current_account), db: AsyncSession = Dep
     }
 
 
-@router.patch("/family", dependencies=[Depends(require_owner)])
-async def rename_family(
-    body: FamilyBody, account: Account = Depends(require_owner), db: AsyncSession = Depends(get_db)
-) -> dict:
-    family = await db.get(Family, account.family_id)
-    if family is None:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "家庭不存在")
-    family.name = body.name.strip() or family.name
-    await db.commit()
-    return {"id": family.id, "name": family.name}
 
 
-# ------------------------------------------------------------------ 子账号
 
-@router.get("/accounts", dependencies=[Depends(require_owner)])
-async def list_accounts(
+# ------------------------------------------------------------------ 家庭（= 登录账号，1:1）
+
+class FamilyCreate(BaseModel):
+    name: str
+    username: str
+    password: str
+
+
+class FamilyPatch(BaseModel):
+    name: str | None = None
+    password: str | None = None
+    active: bool | None = None
+
+
+@router.get("/families", dependencies=[Depends(require_owner)])
+async def list_families(
     account: Account = Depends(require_owner), db: AsyncSession = Depends(get_db)
 ) -> list[dict]:
+    """家庭列表：每个家庭账号一行。"""
     rows = (
         await db.execute(
-            select(Account).where(Account.family_id == account.family_id).order_by(Account.id)
+            select(Account, Family, func.count(Student.id))
+            .join(Family, Family.id == Account.family_id)
+            .outerjoin(Student, Student.family_id == Account.family_id)
+            .where(Account.role == "member")
+            .group_by(Account.id, Family.id)
+            .order_by(Account.id)
         )
-    ).scalars().all()
+    ).all()
     return [
         {
-            "id": a.id,
-            "username": a.username,
-            "display_name": a.display_name,
-            "role": a.role,
-            "active": a.active,
-            "created_at": a.created_at.isoformat() if a.created_at else None,
+            "id": acc.id,
+            "family_id": fam.id,
+            "name": fam.name,
+            "username": acc.username,
+            "active": acc.active,
+            "students": students,
+            "created_at": acc.created_at.isoformat() if acc.created_at else None,
         }
-        for a in rows
+        for acc, fam, students in rows
     ]
 
 
-@router.post("/accounts", dependencies=[Depends(require_owner)])
-async def create_account(
-    body: AccountBody,
+@router.post("/families", dependencies=[Depends(require_owner)])
+async def create_family(
+    body: FamilyCreate,
     account: Account = Depends(require_owner),
     db: AsyncSession = Depends(get_db),
 ) -> dict:
-    """主账号建子账号（role=member），用来管学生和计划。"""
+    """新增家庭：建一个家庭 + 一个登录账号（1:1）。"""
+    name = body.name.strip()
     username = body.username.strip()
+    if not name:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "家庭名称不能为空")
     if len(username) < 3:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "用户名至少 3 个字符")
     if len(body.password) < 6:
@@ -150,55 +147,67 @@ async def create_account(
     if exists is not None:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "用户名已被占用")
 
+    family = Family(name=name)
+    db.add(family)
+    await db.flush()
     created = Account(
-        family_id=account.family_id,
+        family_id=family.id,
         username=username,
         password_hash=hash_password(body.password),
         role="member",
-        display_name=body.display_name,
+        display_name=name,
     )
     db.add(created)
     await db.commit()
     await db.refresh(created)
-    return {"id": created.id, "username": created.username, "role": created.role}
+    return {"id": created.id, "family_id": family.id, "name": family.name, "username": created.username}
 
 
-@router.patch("/accounts/{account_id}", dependencies=[Depends(require_owner)])
-async def patch_account(
+@router.patch("/families/{account_id}", dependencies=[Depends(require_owner)])
+async def patch_family(
     account_id: int,
-    body: AccountPatch,
+    body: FamilyPatch,
     account: Account = Depends(require_owner),
     db: AsyncSession = Depends(get_db),
 ) -> dict:
+    """改家庭名称 / 密码 / 启停。"""
     target = await db.get(Account, account_id)
-    if target is None or target.family_id != account.family_id:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "账号不存在")
-    if body.display_name is not None:
-        target.display_name = body.display_name
+    if target is None or target.role != "member":
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "家庭不存在")
+    family = await db.get(Family, target.family_id)
+    if family is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "家庭不存在")
+
+    if body.name is not None:
+        name = body.name.strip()
+        if not name:
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, "家庭名称不能为空")
+        family.name = name
+        target.display_name = name
     if body.password:
         if len(body.password) < 6:
             raise HTTPException(status.HTTP_400_BAD_REQUEST, "密码至少 6 位")
         target.password_hash = hash_password(body.password)
     if body.active is not None:
-        if target.id == account.id and not body.active:
-            raise HTTPException(status.HTTP_400_BAD_REQUEST, "不能停用自己")
         target.active = body.active
     await db.commit()
-    return {"id": target.id, "active": target.active}
+    return {"id": target.id, "name": family.name, "active": target.active}
 
 
-@router.delete("/accounts/{account_id}", dependencies=[Depends(require_owner)])
-async def delete_account(
+@router.delete("/families/{account_id}", dependencies=[Depends(require_owner)])
+async def delete_family(
     account_id: int,
     account: Account = Depends(require_owner),
     db: AsyncSession = Depends(get_db),
 ) -> dict:
+    """删家庭：连同它的学生、计划、播放记录一起删（外键级联）。"""
     target = await db.get(Account, account_id)
-    if target is None or target.family_id != account.family_id:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "账号不存在")
-    if target.role == "owner":
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, "不能删除主账号")
+    if target is None or target.role != "member":
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "家庭不存在")
+    family = await db.get(Family, target.family_id)
     await db.delete(target)
+    if family is not None:
+        await db.delete(family)
     await db.commit()
     return {"deleted": account_id}
 

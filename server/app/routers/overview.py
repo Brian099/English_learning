@@ -10,7 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..config import settings
 from ..db import get_db
-from ..models import Account, Family, Series, Student, Transcript, Video
+from ..models import Account, Series, Student, Transcript, Video
 from ..pipeline import state as pipeline_state
 from ..pipeline import pending_count
 from ..security import require_owner
@@ -36,10 +36,9 @@ def _dir_size(path: Path) -> int:
 
 @router.get("/overview", dependencies=[Depends(require_owner)])
 async def overview(db: AsyncSession = Depends(get_db)) -> dict:
-    families = (await db.execute(select(func.count(Family.id)))).scalar_one()
-    accounts = (await db.execute(select(func.count(Account.id)))).scalar_one()
-    owners = (
-        await db.execute(select(func.count(Account.id)).where(Account.role == "owner"))
+    # 一个家庭 = 一个家庭账号（主账号是系统管理员，不计入家庭列表）
+    families = (
+        await db.execute(select(func.count(Account.id)).where(Account.role == "member"))
     ).scalar_one()
     students = (await db.execute(select(func.count(Student.id)))).scalar_one()
     series = (await db.execute(select(func.count(Series.id)))).scalar_one()
@@ -73,9 +72,6 @@ async def overview(db: AsyncSession = Depends(get_db)) -> dict:
     return {
         "family": {
             "count": families,
-            "accounts": accounts,
-            "owners": owners,
-            "members": accounts - owners,
             "students": students,
         },
         "content": {

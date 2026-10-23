@@ -1,4 +1,4 @@
-﻿from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator
 
 from sqlalchemy import event
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
@@ -65,9 +65,16 @@ async def init_db() -> None:
 
 
 async def _bootstrap_family() -> None:
-    """老库升级：把现有学生挂到默认家庭下，并建一个主账号。
+    """建表后的数据整理。
 
-    新装也一样——首次启动建「我的家」+ 主账号 parent，密码取 PARENT_PASSWORD。
+    模型：一个家庭 = 一个登录账号（1:1）。
+    主账号（owner）是系统管理员，自己占一个隐藏家庭「系统」，不参与家庭列表。
+
+    这里负责：
+    1. 保证有一个主账号（首次启动用 PARENT_PASSWORD）
+    2. 主账号和家庭账号共用同一个家庭时，把主账号挪到独立的「系统」家庭
+    3. 多个家庭账号共用一个家庭时，各自拆成独立家庭
+    4. 没有归属的学生挂到主账号所在家庭（老数据兜底）
     """
     from sqlalchemy import select, update
 
@@ -75,32 +82,65 @@ async def _bootstrap_family() -> None:
     from .security import hash_password
 
     async with SessionLocal() as session:
-        family = (await session.execute(select(Family).order_by(Family.id))).scalars().first()
-        if family is None:
-            family = Family(name="我的家")
-            session.add(family)
+        families = (await session.execute(select(Family).order_by(Family.id))).scalars().all()
+        if not families:
+            families = [Family(name="系统")]
+            session.add(families[0])
             await session.flush()
 
-        # 没有归属的学生（老数据）统一挂到默认家庭
-        await session.execute(
-            update(Student).where(Student.family_id.is_(None)).values(family_id=family.id)
-        )
-
-        has_owner = (
-            await session.execute(
-                select(Account.id).where(Account.family_id == family.id, Account.role == "owner")
+        # 1) 主账号
+        owner = (
+            await session.execute(select(Account).where(Account.role == "owner").order_by(Account.id))
+        ).scalars().first()
+        if owner is None:
+            owner = Account(
+                family_id=families[0].id,
+                username="parent",
+                password_hash=hash_password(settings.parent_password),
+                role="owner",
+                display_name="主账号",
             )
-        ).first()
-        if has_owner is None:
-            session.add(
-                Account(
-                    family_id=family.id,
-                    username="parent",
-                    password_hash=hash_password(settings.parent_password),
-                    role="owner",
-                    display_name="主账号",
+            session.add(owner)
+            await session.flush()
+
+        # 2) 主账号独占一个「系统」家庭
+        shared = (
+            await session.execute(
+                select(Account.id).where(
+                    Account.family_id == owner.family_id, Account.id != owner.id
                 )
             )
+        ).first()
+        if shared is not None:
+            system_family = Family(name="系统")
+            session.add(system_family)
+            await session.flush()
+            owner.family_id = system_family.id
+            await session.flush()
+
+        # 3) 家庭账号各占一个家庭
+        members = (
+            await session.execute(select(Account).where(Account.role == "member").order_by(Account.id))
+        ).scalars().all()
+        seen: dict[int, int] = {}
+        for member in members:
+            if member.family_id is None:
+                new_family = Family(name=member.display_name or member.username)
+                session.add(new_family)
+                await session.flush()
+                member.family_id = new_family.id
+            elif member.family_id in seen:
+                old = await session.get(Family, member.family_id)
+                new_family = Family(name=f"{old.name}（{member.username}）" if old else member.username)
+                session.add(new_family)
+                await session.flush()
+                member.family_id = new_family.id
+            seen[member.family_id] = member.id
+
+        # 4) 老数据兜底
+        await session.execute(
+            update(Student).where(Student.family_id.is_(None)).values(family_id=owner.family_id)
+        )
         await session.commit()
 
 

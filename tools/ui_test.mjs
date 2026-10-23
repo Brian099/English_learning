@@ -95,10 +95,30 @@ async function main() {
       body: JSON.stringify({ username: memberUser, password: memberPwd }),
     });
     if (!probe.ok) {
-      await fetch(BASE + '/api/accounts', {
+      await fetch(BASE + '/api/families', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${ownerToken}` },
-        body: JSON.stringify({ username: memberUser, password: memberPwd }),
+        body: JSON.stringify({ name: 'UI 测试家庭', username: memberUser, password: memberPwd }),
+      });
+    }
+  }
+
+  // 家庭账号各自独立，测试家庭里没有学生就先建一个
+  const memberLogin = await fetch(BASE + '/api/admin/login', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ username: memberUser, password: memberPwd }),
+  });
+  if (memberLogin.ok) {
+    const { token: mt } = await memberLogin.json();
+    const list = await (await fetch(BASE + '/api/students', {
+      headers: { Authorization: `Bearer ${mt}` },
+    })).json();
+    if (!Array.isArray(list) || !list.length) {
+      await fetch(BASE + '/api/students', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${mt}` },
+        body: JSON.stringify({ name: 'UI 测试娃', daily_target_min: 20 }),
       });
     }
   }
@@ -194,9 +214,11 @@ async function main() {
   const settingsReady = await waitFor(() => doc.getElementById('add-student'));
   check('设置页渲染', Boolean(settingsReady));
   check('学生区有配对码按钮', doc.querySelectorAll('#tab-settings [data-pair]').length > 0);
-  check('设备区可撤销', doc.querySelectorAll('#tab-settings [data-revoke]').length > 0);
+  const deviceHeading = [...doc.querySelectorAll('#tab-settings .card h2')]
+    .find((h) => textOf(h).includes('设备'));
+  check('设备区渲染', Boolean(deviceHeading));
   check('子账号看不到内容维护', !doc.getElementById('do-scan'));
-  check('子账号看不到「账号」标签',
+  check('家庭账号看不到「家庭管理」标签',
     doc.querySelector('#tabs button[data-tab="accounts"]').classList.contains('hidden'));
   check('子账号看不到「内容库」标签',
     doc.querySelector('#tabs button[data-tab="library"]').classList.contains('hidden'));

@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+﻿#!/usr/bin/env python3
 """后端冒烟测试：把所有接口按真实使用顺序跑一遍。
 
 用法：
@@ -70,8 +70,8 @@ def main() -> int:
     probe = call(base, "/api/admin/login", "POST",
                  {"username": member_name, "password": member_pwd}, expect_error=True)
     if probe.get("__status") == 401:
-        call(base, "/api/accounts", "POST",
-             {"username": member_name, "password": member_pwd, "display_name": "冒烟子账号"}, owner)
+        call(base, "/api/families", "POST",
+             {"name": "冒烟家庭", "username": member_name, "password": member_pwd}, owner)
     token = call(base, "/api/admin/login", "POST",
                  {"username": member_name, "password": member_pwd})["token"]
     check("子账号登录", bool(token))
@@ -79,14 +79,14 @@ def main() -> int:
     check("主账号不能管学生", call(base, "/api/students", token=owner, expect_error=True).get("__status") == 403)
     check("子账号不能做内容维护",
           call(base, "/api/scan/preview", "POST", token=token, expect_error=True).get("__status") == 403)
-    check("子账号不能管账号",
-          call(base, "/api/accounts", token=token, expect_error=True).get("__status") == 403)
+    check("子账号不能管家庭",
+          call(base, "/api/families", token=token, expect_error=True).get("__status") == 403)
     check("子账号可以看内容库", call(base, "/api/videos?limit=1", token=token) is not None)
 
     overview = call(base, "/api/overview", token=owner)
     check("主账号概览含资源统计",
-          overview["content"]["videos"] >= 1 and overview["family"]["accounts"] >= 1,
-          f"视频 {overview['content']['videos']} 集 · 账号 {overview['family']['accounts']} 个")
+          overview["content"]["videos"] >= 1 and overview["family"]["count"] >= 1,
+          f"视频 {overview['content']['videos']} 集 · 家庭 {overview['family']['count']} 个")
     check("子账号不能看主账号概览",
           call(base, "/api/overview", token=token, expect_error=True).get("__status") == 403)
 
