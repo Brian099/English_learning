@@ -83,6 +83,13 @@ def main() -> int:
           call(base, "/api/accounts", token=token, expect_error=True).get("__status") == 403)
     check("子账号可以看内容库", call(base, "/api/videos?limit=1", token=token) is not None)
 
+    overview = call(base, "/api/overview", token=owner)
+    check("主账号概览含资源统计",
+          overview["content"]["videos"] >= 1 and overview["family"]["accounts"] >= 1,
+          f"视频 {overview['content']['videos']} 集 · 账号 {overview['family']['accounts']} 个")
+    check("子账号不能看主账号概览",
+          call(base, "/api/overview", token=token, expect_error=True).get("__status") == 403)
+
     print("\n3. 学生")
     students = call(base, "/api/students", token=token)
     if not students:

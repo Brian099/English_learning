@@ -149,10 +149,86 @@ function switchTab(tab) {
   if (tab === 'settings') renderSettings();
 }
 
+function fmtBytes(bytes) {
+  if (!bytes) return '0 B';
+  const units = ['B', 'KB', 'MB', 'GB'];
+  let value = bytes;
+  let index = 0;
+  while (value >= 1024 && index < units.length - 1) { value /= 1024; index += 1; }
+  return `${value.toFixed(value >= 100 ? 0 : 1)} ${units[index]}`;
+}
+
+/** 主账号概览：资源与家庭统计 */
+async function renderOwnerOverview(root) {
+  root.innerHTML = '<div class="empty">加载中…</div>';
+  try {
+    const data = await api('/api/overview');
+    const f = data.family;
+    const c = data.content;
+    const cache = data.cache;
+    const ingest = data.ingest;
+
+    const ingestBar = ingest.running
+      ? `<div class="muted" style="margin-top:8px">
+           正在处理：${ingest.done}/${ingest.total}（${esc(ingest.stage)}）
+         </div>`
+      : `<div class="muted" style="margin-top:8px">当前空闲${ingest.pending ? `，还有 ${ingest.pending} 集待处理` : ''}</div>`;
+
+    root.innerHTML = `
+      <div class="card">
+        <h2>家庭与账号</h2>
+        <div class="stats">
+          <div class="stat"><b>${f.count}</b><span>家庭</span></div>
+          <div class="stat"><b>${f.accounts}</b><span>账号（主 ${f.owners} / 子 ${f.members}）</span></div>
+          <div class="stat"><b>${f.students}</b><span>学生</span></div>
+        </div>
+      </div>
+
+      <div class="card">
+        <h2>内容资源</h2>
+        <div class="stats">
+          <div class="stat"><b>${c.videos}</b><span>视频集数</span></div>
+          <div class="stat"><b>${c.series}</b><span>系列</span></div>
+          <div class="stat"><b>${c.total_minutes}</b><span>总时长（分钟）</span></div>
+          <div class="stat"><b>${fmtBytes(c.size_bytes)}</b><span>视频占用</span></div>
+        </div>
+      </div>
+
+      <div class="card">
+        <h2>入库状态</h2>
+        <div class="stats">
+          <div class="stat"><b>${c.transcripts}</b><span>已提取对白</span></div>
+          <div class="stat"><b>${c.graded}</b><span>已分级</span></div>
+          <div class="stat"><b>${c.with_audio}</b><span>有独立音轨</span></div>
+          <div class="stat"><b>${c.pending}</b><span>待处理</span></div>
+        </div>
+        ${ingestBar}
+        <div class="muted" style="margin-top:6px">转写模型：${esc(ingest.model)}</div>
+        ${ingest.last_error ? `<div class="error" style="margin-top:6px">${esc(ingest.last_error)}</div>` : ''}
+      </div>
+
+      <div class="card">
+        <h2>缓存占用</h2>
+        <div class="stats">
+          <div class="stat"><b>${fmtBytes(cache.audio_bytes)}</b><span>播放音轨</span></div>
+          <div class="stat"><b>${fmtBytes(cache.asr_bytes)}</b><span>转写输入</span></div>
+          <div class="stat"><b>${fmtBytes(cache.video_bytes)}</b><span>归一化视频</span></div>
+          <div class="stat"><b>${fmtBytes(cache.total_bytes)}</b><span>合计</span></div>
+        </div>
+        <div class="muted" style="margin-top:8px">
+          媒体目录 ${esc(data.paths.media_root)} · 缓存目录 ${esc(data.paths.cache_root)}
+        </div>
+      </div>`;
+  } catch (err) {
+    root.innerHTML = `<div class="card"><div class="empty">${esc(err.message)}</div></div>`;
+  }
+}
+
 /* ------------------------------------------------------------- 概览 */
 
 async function renderDashboard() {
   const root = document.getElementById('tab-dashboard');
+  if (state.role === 'owner') return renderOwnerOverview(root);
   root.innerHTML = '<div class="empty">加载中…</div>';
   try {
     const data = await api('/api/dashboard');

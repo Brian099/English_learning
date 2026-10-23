@@ -8,7 +8,7 @@ from fastapi.staticfiles import StaticFiles
 
 from .config import settings
 from .db import init_db
-from .routers import auth, content, ingest, maintenance, plan, play, report, student
+from .routers import auth, content, ingest, maintenance, overview, plan, play, report, student
 
 logger = logging.getLogger("kids")
 
@@ -45,7 +45,7 @@ async def health() -> dict:
     }
 
 
-for module in (auth, content, ingest, play, report, plan, student, maintenance):
+for module in (auth, content, ingest, play, report, plan, student, maintenance, overview):
     app.include_router(module.router)
 
 # 静态前端：必须最后挂载，否则会吃掉 /api 路由

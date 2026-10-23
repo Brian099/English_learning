@@ -212,10 +212,11 @@ async function main() {
   editBtn.dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
   const editBox = doc.querySelector('#tab-settings [data-student-row] [data-edit]');
   check('点编辑出现输入框', !editBox.classList.contains('hidden'));
-  const weekdayInputs = doc.querySelectorAll('#tab-settings [data-weekday]');
+  const firstRow = doc.querySelector('#tab-settings [data-student-row]');
+  const weekdayInputs = firstRow.querySelectorAll('[data-weekday]');
   check('有 7 个星期输入框', weekdayInputs.length === 7, `${weekdayInputs.length} 个`);
 
-  const setAll = (value) => [...doc.querySelectorAll('#tab-settings [data-weekday]')]
+  const setAll = (value) => [...doc.querySelectorAll('#tab-settings [data-student-row]')[0].querySelectorAll('[data-weekday]')]
     .forEach((input) => { input.value = String(value); });
   setAll(35);
   doc.querySelector('#tab-settings [data-edit-save]')
