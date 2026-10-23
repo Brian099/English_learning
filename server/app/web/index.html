@@ -3,44 +3,69 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<title>英语磨耳朵 · 家长端</title>
-<link rel="stylesheet" href="/styles.css?v=8">
+<title>英语磨耳朵 · 管理后台</title>
+<!-- 全部资源本地化，NAS 离线可用 -->
+<link rel="stylesheet" href="/vendor/bootstrap.min.css">
+<link rel="stylesheet" href="/vendor/bootstrap-icons.css">
+<link rel="stylesheet" href="/styles.css?v=11">
 </head>
 <body>
 
 <!-- 登录 -->
-<section id="login" class="login hidden">
+<section id="login" class="hidden login-screen">
   <div class="login-card">
+    <div class="login-brand"><i class="bi bi-headphones"></i></div>
     <h1>英语磨耳朵</h1>
     <p class="muted">请输入账号密码</p>
     <form id="login-form">
-      <input type="text" id="username" placeholder="用户名" value="parent"
+      <label class="form-label small muted">用户名</label>
+      <input type="text" id="username" class="form-control" value="parent"
              autocomplete="username" required>
-      <input type="password" id="password" placeholder="密码"
+      <label class="form-label small muted mt-2">密码</label>
+      <input type="password" id="password" class="form-control"
              autocomplete="current-password" required>
-      <button type="submit">进入</button>
+      <button type="submit" class="btn btn-primary w-100 mt-3">进入</button>
     </form>
-    <p id="login-error" class="error"></p>
+    <p id="login-error" class="error mt-2"></p>
   </div>
 </section>
 
-<!-- 主界面 -->
-<div id="app" class="hidden">
-  <header>
-    <h1>英语磨耳朵</h1>
-    <span id="who" class="muted small"></span>
-    <button id="logout" class="ghost small">退出</button>
-  </header>
+<!-- 主界面：左导航 + 右内容 -->
+<div id="app" class="hidden app-shell">
 
-  <nav id="tabs">
-    <button data-tab="dashboard" class="active" data-roles="member owner">概览</button>
-    <button data-tab="library" data-roles="owner">内容库</button>
-    <button data-tab="plan" data-roles="member">计划</button>
-    <button data-tab="accounts" data-roles="owner">账号</button>
-    <button data-tab="settings" data-roles="member owner">设置</button>
-  </nav>
+  <aside class="sidebar">
+    <div class="brand">
+      <i class="bi bi-headphones"></i>
+      <span>英语磨耳朵</span>
+    </div>
 
-  <main>
+    <nav id="tabs" class="side-nav">
+      <button data-tab="dashboard" data-roles="member owner">
+        <i class="bi bi-grid-1x2"></i><span>概览</span>
+      </button>
+      <button data-tab="library" data-roles="owner">
+        <i class="bi bi-collection-play"></i><span>内容库</span>
+      </button>
+      <button data-tab="plan" data-roles="member">
+        <i class="bi bi-calendar3"></i><span>计划</span>
+      </button>
+      <button data-tab="accounts" data-roles="owner">
+        <i class="bi bi-people"></i><span>账号</span>
+      </button>
+      <button data-tab="settings" data-roles="member owner">
+        <i class="bi bi-gear"></i><span>设置</span>
+      </button>
+    </nav>
+
+    <div class="sidebar-foot">
+      <div id="who" class="who"></div>
+      <button id="logout" class="btn btn-sm btn-outline-secondary w-100">
+        <i class="bi bi-box-arrow-right"></i> 退出
+      </button>
+    </div>
+  </aside>
+
+  <main class="content">
     <section id="tab-dashboard" class="tab"></section>
     <section id="tab-library" class="tab hidden"></section>
     <section id="tab-plan" class="tab hidden"></section>
@@ -50,15 +75,16 @@
 </div>
 
 <!-- 详情弹层 -->
-<div id="modal" class="modal hidden">
+<div id="modal" class="modal-mask hidden">
   <div class="modal-card">
-    <button id="modal-close" class="ghost small close">✕</button>
+    <button id="modal-close" class="btn btn-sm btn-light close">✕</button>
     <div id="modal-body"></div>
   </div>
 </div>
 
-<div id="toast" class="toast hidden"></div>
+<div id="toast" class="toast-bar hidden"></div>
 
-<script src="/app.js?v=14"></script>
+<script src="/vendor/bootstrap.bundle.min.js"></script>
+<script src="/app.js?v=15"></script>
 </body>
 </html>

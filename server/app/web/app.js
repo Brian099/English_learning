@@ -263,8 +263,8 @@ function studentCard(card) {
       <h2>${esc(card.student.name)}</h2>
       <span class="badge">连续 ${card.streak} 天</span>
     </div>
-    <div class="row" style="align-items:baseline">
-      <span class="big">${today.effective_min}</span><span class="unit">/ ${today.target_min} 分钟</span>
+    <div class="toolbar" style="align-items:baseline">
+      <span class="fs-3 fw-bold">${today.effective_min}</span><span class="unit">/ ${today.target_min} 分钟</span>
       ${done ? '<span class="badge l1">已达标</span>' : ''}
     </div>
     <div class="bar ${done ? 'done' : ''}"><i style="width:${percent}%"></i></div>
@@ -410,9 +410,9 @@ async function renderPlan() {
 
     root.innerHTML = `
       <div class="card">
-        <div class="row">
+        <div class="toolbar">
           <select id="plan-student">${studentOptions}</select>
-          <button id="plan-auto" class="ghost">✨ 重排今日</button>
+          <button id="plan-auto" class="btn btn-sm btn-outline-secondary">✨ 重排今日</button>
           <span class="muted" id="plan-hint"></span>
         </div>
         <div class="muted" style="margin-top:8px;line-height:1.6">
@@ -464,7 +464,7 @@ async function loadPlan() {
 
       return `
         <div class="card">
-          <div class="row" style="justify-content:space-between;align-items:center">
+          <div class="toolbar" style="justify-content:space-between;align-items:center">
             <div><b>${day.weekday}</b> <span class="muted">${day.day}</span> ${badge}</div>
             <div class="muted">目标 ${day.target_min} 分钟 · 实际 ${day.total_min} 分钟${short}</div>
           </div>
@@ -505,16 +505,16 @@ async function renderAccounts() {
           <div class="meta">用户名 ${esc(a.username)}${a.active ? '' : ' · 已停用'}</div>
         </div>
         ${a.role === 'owner' ? '' : `
-          <button class="ghost small" data-reset="${a.id}" data-name="${esc(a.username)}">改密码</button>
-          <button class="ghost small" data-del="${a.id}">删除</button>`}
+          <button class="btn btn-sm btn-outline-secondary" data-reset="${a.id}" data-name="${esc(a.username)}">改密码</button>
+          <button class="btn btn-sm btn-outline-secondary" data-del="${a.id}">删除</button>`}
       </div>`).join('') || '<div class="empty">还没有子账号</div>';
 
     root.innerHTML = `
       <div class="card">
         <h2>家庭</h2>
-        <div class="row">
+        <div class="toolbar">
           <input type="text" id="family-name" value="${esc(state.family)}" placeholder="家庭名称">
-          <button id="save-family">保存</button>
+          <button id="save-family" class="btn btn-primary">保存</button>
         </div>
         <p class="muted" style="margin:10px 0 0">
           一个账号对应一个家庭。主账号负责家庭设置、子账号和内容维护；
@@ -524,10 +524,10 @@ async function renderAccounts() {
       <div class="card">
         <h2>账号</h2>
         <div class="list">${rows}</div>
-        <div class="row" style="margin-top:12px">
+        <div class="toolbar" style="margin-top:12px">
           <input type="text" id="new-username" placeholder="子账号用户名">
           <input type="password" id="new-password" placeholder="密码（≥6 位）">
-          <button id="add-account">添加子账号</button>
+          <button id="add-account" class="btn btn-primary">添加子账号</button>
         </div>
       </div>`;
 
@@ -592,9 +592,9 @@ async function renderOwnerSettings(root) {
   root.innerHTML = `
     <div class="card">
       <h2>家庭</h2>
-      <div class="row">
+      <div class="toolbar">
         <input type="text" id="family-name" value="${esc(state.family)}" placeholder="家庭名称">
-        <button id="save-family">保存</button>
+        <button id="save-family" class="btn btn-primary">保存</button>
       </div>
       <p class="muted" style="margin:10px 0 0">
         主账号：内容维护 + 家庭与子账号。学生和计划由子账号管理。
@@ -602,10 +602,10 @@ async function renderOwnerSettings(root) {
     </div>
     <div class="card">
       <h2>内容维护</h2>
-      <div class="row">
-        <button id="do-scan">扫描视频目录</button>
-        <button id="do-import" class="hidden">导入并处理</button>
-        <button id="do-audio" class="ghost">补跑入库（失败重试）</button>
+      <div class="toolbar">
+        <button id="do-scan" class="btn btn-primary">扫描视频目录</button>
+        <button id="do-import" class="btn btn-primary hidden">导入并处理</button>
+        <button id="do-audio" class="btn btn-sm btn-outline-secondary">补跑入库（失败重试）</button>
       </div>
       <div id="scan-result" class="muted" style="margin-top:10px;line-height:1.7"></div>
       <span class="muted" id="maintenance-status"></span>
@@ -698,9 +698,9 @@ async function renderSettings() {
             周一到周日各自的目标分钟数；留空的那天用平均值
           </div>
         </div>
-        <button class="ghost small" data-edit-save="${s.id}" hidden>保存</button>
-        <button class="ghost small" data-edit-btn="${s.id}">编辑</button>
-        <button class="ghost small" data-pair="${s.id}">配对码</button>
+        <button class="btn btn-sm btn-outline-secondary" data-edit-save="${s.id}" hidden>保存</button>
+        <button class="btn btn-sm btn-outline-secondary" data-edit-btn="${s.id}">编辑</button>
+        <button class="btn btn-sm btn-outline-secondary" data-pair="${s.id}">配对码</button>
       </div>`;
     }).join('') || '<div class="empty">还没有学生</div>';
 
@@ -708,16 +708,16 @@ async function renderSettings() {
       <div class="item">
         <div class="grow"><div class="title">${esc(d.name)}</div>
           <div class="meta">${esc(d.platform || '未知平台')} · 最后活跃 ${d.last_seen_at ? d.last_seen_at.slice(0, 16).replace('T', ' ') : '—'}</div></div>
-        <button class="ghost small" data-revoke="${d.id}">撤销</button>
+        <button class="btn btn-sm btn-outline-secondary" data-revoke="${d.id}">撤销</button>
       </div>`).join('') || '<div class="empty">还没有配对设备</div>';
 
     root.innerHTML = `
       <div class="card">
         <h2>学生</h2>
         <div class="list">${studentRows}</div>
-        <div class="row" style="margin-top:12px">
+        <div class="toolbar" style="margin-top:12px">
           <input type="text" id="new-student" placeholder="学生姓名">
-          <button id="add-student">添加</button>
+          <button id="add-student" class="btn btn-primary">添加</button>
         </div>
       </div>
       <div class="card">
@@ -730,11 +730,7 @@ async function renderSettings() {
         <p class="muted" style="margin:0 0 10px">
           给孩子用的页面：配对后只听不看，熄屏也能继续播。
         </p>
-        <a href="/student.html" target="_blank" rel="noopener"
-           style="display:inline-block;padding:10px 16px;border-radius:10px;
-                  background:var(--brand);color:#fff;text-decoration:none;font-size:14px">
-          打开学生端 →
-        </a>
+        <a href="/student.html" target="_blank" rel="noopener" class="btn btn-primary">打开学生端 →</a>
       </div>`;
 
     document.getElementById('add-student').addEventListener('click', async () => {
@@ -805,7 +801,7 @@ async function renderSettings() {
             body: JSON.stringify({ student_id: Number(el.dataset.pair), device_name: '平板' }),
           });
           showModal(`<h2>配对码</h2>
-            <div class="big" style="letter-spacing:6px;margin:16px 0">${esc(data.code)}</div>
+            <div class="fs-3 fw-bold" style="letter-spacing:6px;margin:16px 0">${esc(data.code)}</div>
             <div class="muted">5 分钟内有效，在平板上输入即可</div>`);
         } catch (err) { toast(err.message); }
       });
