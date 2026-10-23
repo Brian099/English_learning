@@ -1,4 +1,4 @@
-﻿// 学生端网页的 jsdom 测试：配对 → 今日任务 → 抖音式播放器 → 有效时长 → 记录
+// 学生端网页的 jsdom 测试：配对 → 今日任务 → 抖音式播放器 → 有效时长 → 记录
 // 用法：node tools/ui_test_student.mjs [--base http://127.0.0.1:8010] [--password dev]
 
 import { createRequire } from 'node:module';
@@ -70,8 +70,8 @@ async function main() {
     memberToken = (await apiAs(null, '/api/admin/login', 'POST',
       { username: 'ui-member', password: 'ui-member-123' })).token;
   } catch (err) {
-    await apiAs(ownerToken, '/api/accounts', 'POST',
-      { username: 'ui-member', password: 'ui-member-123' });
+    await apiAs(ownerToken, '/api/families', 'POST',
+      { name: '学生端测试家庭', username: 'ui-member', password: 'ui-member-123' });
     memberToken = (await apiAs(null, '/api/admin/login', 'POST',
       { username: 'ui-member', password: 'ui-member-123' })).token;
   }

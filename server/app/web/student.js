@@ -257,9 +257,16 @@ function sourceFor(item) {
   return `${url}${sep}token=${encodeURIComponent(state.token)}`;
 }
 
+let leavingPlayer = false;
 document.getElementById('player-back').addEventListener('click', async () => {
-  await finalizeCurrent(false);
-  await loadHome();
+  if (leavingPlayer) return;          // 连点两下不要重复结算
+  leavingPlayer = true;
+  try {
+    await finalizeCurrent(false);
+    await loadHome();
+  } finally {
+    leavingPlayer = false;
+  }
 });
 
 document.getElementById('btn-play').addEventListener('click', togglePlay);
