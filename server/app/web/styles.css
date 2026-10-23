@@ -115,10 +115,17 @@ body {
   line-height: 1.5;
 }
 
+/* 内容区：占满剩余宽度，内部再居中并限制最大宽度 */
 .content {
   flex: 1;
   min-width: 0;
   padding: 22px 26px 60px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+.content > .tab {
+  width: 100%;
   max-width: 1080px;
 }
 
@@ -420,3 +427,8 @@ body {
 
 /* 让 chip 与 Bootstrap 按钮高度一致 */
 .chip { line-height: 1.4; }
+/* 窄屏下内容区铺满，不做居中限制 */
+@media (max-width: 860px) {
+  .content { align-items: stretch; }
+  .content > .tab { max-width: none; }
+}
