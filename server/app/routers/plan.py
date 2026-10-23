@@ -1,4 +1,4 @@
-from datetime import date, datetime, timedelta
+﻿from datetime import date, datetime, timedelta
 from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
@@ -8,9 +8,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..config import settings
 from ..db import get_db
-from ..models import Plan, PlanItem, Student, Video
+from ..models import Account, Plan, PlanItem, Student, Video
 from ..scheduler import WEEKDAYS_CN, build_daily_plan, build_week, target_for_day
-from ..security import read_auth, require_parent
+from ..security import read_auth, require_member
 
 router = APIRouter(prefix="/api", tags=["plan"])
 
@@ -32,7 +32,7 @@ async def week_schedule(
     student_id: int,
     days: int = Query(7, ge=1, le=14),
     start: date | None = None,
-    _auth: dict = Depends(read_auth),
+    auth: dict = Depends(read_auth),
     db: AsyncSession = Depends(get_db),
 ) -> dict:
     """未来 N 天的排片预览（默认从今天起 7 天）。
@@ -41,7 +41,7 @@ async def week_schedule(
     以后的日子按同样规则预演，同一条内容不会在两天里重复。
     """
     student = await db.get(Student, student_id)
-    if student is None:
+    if student is None or student.family_id != auth.get("family_id"):
         raise HTTPException(status.HTTP_404_NOT_FOUND, "学生不存在")
 
     start_day = start or _today()
@@ -134,10 +134,14 @@ def _set_weekday_target(student: Student, day: date, value: int) -> None:
 async def get_plan(
     student_id: int,
     day: date,
-    _auth: dict = Depends(read_auth),
+    auth: dict = Depends(read_auth),
     db: AsyncSession = Depends(get_db),
 ) -> dict:
     """孩子端拉取今日任务。"""
+    student = await db.get(Student, student_id)
+    if student is None or student.family_id != auth.get("family_id"):
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "学生不存在")
+
     plan = (
         await db.execute(select(Plan).where(Plan.student_id == student_id, Plan.day == day))
     ).scalar_one_or_none()
@@ -172,16 +176,17 @@ async def get_plan(
     }
 
 
-@router.post("/plans/{student_id}/{day}/auto", dependencies=[Depends(require_parent)])
+@router.post("/plans/{student_id}/{day}/auto")
 async def auto_plan(
     student_id: int,
     day: date,
     target_min: int | None = None,
+    account: Account = Depends(require_member),
     db: AsyncSession = Depends(get_db),
 ) -> dict:
     """自动排片：按当天的星期目标 + 难度匹配 + 时长装填，只排没听过的内容。"""
     student = await db.get(Student, student_id)
-    if student is None:
+    if student is None or student.family_id != account.family_id:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "学生不存在")
 
     built = await build_daily_plan(db, student, day, target_min)
@@ -242,13 +247,17 @@ async def auto_plan(
     }
 
 
-@router.put("/plans/{student_id}/{day}", dependencies=[Depends(require_parent)])
+@router.put("/plans/{student_id}/{day}")
 async def put_plan(
-    student_id: int, day: date, body: PlanBody, db: AsyncSession = Depends(get_db)
+    student_id: int,
+    day: date,
+    body: PlanBody,
+    account: Account = Depends(require_member),
+    db: AsyncSession = Depends(get_db),
 ) -> dict:
-    """家长端下发计划：整份覆盖该天的 items。"""
+    """子账号下发计划：整份覆盖该天的 items。"""
     student = await db.get(Student, student_id)
-    if student is None:
+    if student is None or student.family_id != account.family_id:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "学生不存在")
 
     if body.video_ids:

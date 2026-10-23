@@ -1,10 +1,10 @@
-﻿<!DOCTYPE html>
+<!DOCTYPE html>
 <html lang="zh-CN">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>英语磨耳朵 · 家长端</title>
-<link rel="stylesheet" href="/styles.css?v=6">
+<link rel="stylesheet" href="/styles.css?v=7">
 </head>
 <body>
 
@@ -12,9 +12,12 @@
 <section id="login" class="login hidden">
   <div class="login-card">
     <h1>英语磨耳朵</h1>
-    <p class="muted">家长端 · 请输入密码</p>
+    <p class="muted">请输入账号密码</p>
     <form id="login-form">
-      <input type="password" id="password" placeholder="家长密码" autocomplete="current-password" required>
+      <input type="text" id="username" placeholder="用户名" value="parent"
+             autocomplete="username" required>
+      <input type="password" id="password" placeholder="密码"
+             autocomplete="current-password" required>
       <button type="submit">进入</button>
     </form>
     <p id="login-error" class="error"></p>
@@ -25,20 +28,23 @@
 <div id="app" class="hidden">
   <header>
     <h1>英语磨耳朵</h1>
+    <span id="who" class="muted small"></span>
     <button id="logout" class="ghost small">退出</button>
   </header>
 
   <nav id="tabs">
-    <button data-tab="dashboard" class="active">概览</button>
-    <button data-tab="library">内容库</button>
-    <button data-tab="plan">计划</button>
-    <button data-tab="settings">设置</button>
+    <button data-tab="dashboard" class="active" data-roles="member owner">概览</button>
+    <button data-tab="library" data-roles="owner">内容库</button>
+    <button data-tab="plan" data-roles="member">计划</button>
+    <button data-tab="accounts" data-roles="owner">账号</button>
+    <button data-tab="settings" data-roles="member owner">设置</button>
   </nav>
 
   <main>
     <section id="tab-dashboard" class="tab"></section>
     <section id="tab-library" class="tab hidden"></section>
     <section id="tab-plan" class="tab hidden"></section>
+    <section id="tab-accounts" class="tab hidden"></section>
     <section id="tab-settings" class="tab hidden"></section>
   </main>
 </div>
@@ -53,6 +59,6 @@
 
 <div id="toast" class="toast hidden"></div>
 
-<script src="/app.js?v=12"></script>
+<script src="/app.js?v=13"></script>
 </body>
 </html>

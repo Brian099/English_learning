@@ -7,9 +7,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..config import settings
 from ..db import get_db
-from ..models import DailyStat, Plan, PlayEvent, Student, Video
+from ..models import Account, DailyStat, Plan, PlayEvent, Student, Video
 from ..scheduler import target_for_day
-from ..security import require_parent
+from ..security import current_account
 
 router = APIRouter(prefix="/api", tags=["report"])
 
@@ -20,9 +20,9 @@ def _today() -> date:
     return datetime.now(TZ).date()
 
 
-async def _student(db: AsyncSession, student_id: int) -> Student:
+async def _student(db: AsyncSession, student_id: int, family_id: int | None = None) -> Student:
     student = await db.get(Student, student_id)
-    if student is None:
+    if student is None or (family_id is not None and student.family_id != family_id):
         raise HTTPException(status.HTTP_404_NOT_FOUND, "学生不存在")
     return student
 
@@ -55,11 +55,17 @@ async def _streak(db: AsyncSession, student_id: int) -> int:
     return streak
 
 
-@router.get("/dashboard", dependencies=[Depends(require_parent)])
-async def dashboard(db: AsyncSession = Depends(get_db)) -> dict:
+@router.get("/dashboard")
+async def dashboard(
+    account: Account = Depends(current_account), db: AsyncSession = Depends(get_db)
+) -> dict:
     """家长首页一次性拿全部学生概览，避免前端多次往返。"""
     students = (
-        await db.execute(select(Student).where(Student.active.is_(True)).order_by(Student.id))
+        await db.execute(
+            select(Student)
+            .where(Student.active.is_(True), Student.family_id == account.family_id)
+            .order_by(Student.id)
+        )
     ).scalars().all()
 
     today = _today()
@@ -116,9 +122,13 @@ async def dashboard(db: AsyncSession = Depends(get_db)) -> dict:
     return {"day": today.isoformat(), "students": cards}
 
 
-@router.get("/report/{student_id}/today", dependencies=[Depends(require_parent)])
-async def report_today(student_id: int, db: AsyncSession = Depends(get_db)) -> dict:
-    student = await _student(db, student_id)
+@router.get("/report/{student_id}/today")
+async def report_today(
+    student_id: int,
+    account: Account = Depends(current_account),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    student = await _student(db, student_id, account.family_id)
     day = _today()
 
     stat = await db.get(DailyStat, (student_id, day))
@@ -141,9 +151,13 @@ async def report_today(student_id: int, db: AsyncSession = Depends(get_db)) -> d
     }
 
 
-@router.get("/report/{student_id}/week", dependencies=[Depends(require_parent)])
-async def report_week(student_id: int, db: AsyncSession = Depends(get_db)) -> dict:
-    student = await _student(db, student_id)
+@router.get("/report/{student_id}/week")
+async def report_week(
+    student_id: int,
+    account: Account = Depends(current_account),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    student = await _student(db, student_id, account.family_id)
     today = _today()
     start = today - timedelta(days=6)
 
@@ -181,10 +195,14 @@ async def report_week(student_id: int, db: AsyncSession = Depends(get_db)) -> di
     }
 
 
-@router.get("/report/{student_id}/attention", dependencies=[Depends(require_parent)])
-async def report_attention(student_id: int, db: AsyncSession = Depends(get_db)) -> dict:
+@router.get("/report/{student_id}/attention")
+async def report_attention(
+    student_id: int,
+    account: Account = Depends(current_account),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
     """关注项（不是警告）：只听了个开头就退出的集数、本周空白日。"""
-    student = await _student(db, student_id)
+    student = await _student(db, student_id, account.family_id)
     today = _today()
     since = datetime.combine(today - timedelta(days=6), datetime.min.time(), TZ)
 

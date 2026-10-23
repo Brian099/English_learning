@@ -1,4 +1,4 @@
-// 学生端网页的 jsdom 测试：配对 → 今日任务 → 抖音式播放器 → 有效时长 → 记录
+﻿// 学生端网页的 jsdom 测试：配对 → 今日任务 → 抖音式播放器 → 有效时长 → 记录
 // 用法：node tools/ui_test_student.mjs [--base http://127.0.0.1:8010] [--password dev]
 
 import { createRequire } from 'node:module';
@@ -62,20 +62,32 @@ async function apiAs(token, path, method = 'GET', body = null) {
 }
 
 async function main() {
-  const parentToken = (await apiAs(null, '/api/admin/login', 'POST', { password: PASSWORD })).token;
-  const students = await apiAs(parentToken, '/api/students');
+  const ownerToken = (await apiAs(null, '/api/admin/login', 'POST',
+    { username: 'parent', password: PASSWORD })).token;
+  // 学生和计划只能子账号管，先确保子账号存在
+  let memberToken;
+  try {
+    memberToken = (await apiAs(null, '/api/admin/login', 'POST',
+      { username: 'ui-member', password: 'ui-member-123' })).token;
+  } catch (err) {
+    await apiAs(ownerToken, '/api/accounts', 'POST',
+      { username: 'ui-member', password: 'ui-member-123' });
+    memberToken = (await apiAs(null, '/api/admin/login', 'POST',
+      { username: 'ui-member', password: 'ui-member-123' })).token;
+  }
+  const students = await apiAs(memberToken, '/api/students');
   if (!students.length) throw new Error('没有学生，请先建一个');
   const studentId = students[0].id;
 
   // 保证今日计划至少 2 集，否则"上下滑切换"没法验证
   const day = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Shanghai' });
   let plan = null;
-  try { plan = await apiAs(parentToken, `/api/plans/${studentId}/${day}`); } catch (err) { plan = null; }
+  try { plan = await apiAs(memberToken, `/api/plans/${studentId}/${day}`); } catch (err) { plan = null; }
   if (!plan || (plan.items || []).length < 2) {
-    await apiAs(parentToken, `/api/plans/${studentId}/${day}/auto?target_min=20`, 'POST');
+    await apiAs(memberToken, `/api/plans/${studentId}/${day}/auto?target_min=20`, 'POST');
   }
 
-  const pairCode = (await apiAs(parentToken, '/api/devices/pair-code', 'POST',
+  const pairCode = (await apiAs(memberToken, '/api/devices/pair-code', 'POST',
     { student_id: studentId, device_name: '学生网页端测试' })).code;
 
   const html = readFileSync(join(PROJECT, 'server/app/web/student.html'), 'utf8');
@@ -295,7 +307,7 @@ async function main() {
   check('返回列表后停止播放（视频）', video.paused === true, `video.paused=${video.paused}`);
   check('返回列表后收起展开面板', !feed.classList.contains('expanded'));
 
-  const today = await apiAs(parentToken, `/api/report/${studentId}/today`);
+  const today = await apiAs(memberToken, `/api/report/${studentId}/today`);
   check('有效时长已计入今日报表', today.effective_min > 0, `${today.effective_min} 分钟`);
   const queueLeft = window.localStorage.getItem('event_queue');
   check('上报后队列已清空', !queueLeft || JSON.parse(queueLeft).length === 0, queueLeft || '空');

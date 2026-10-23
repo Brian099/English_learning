@@ -78,8 +78,34 @@ async function main() {
   check('主界面默认隐藏', window.document.getElementById('app').classList.contains('hidden'));
 
   const doc = window.document;
+
+  // 先确认子账号存在（学生/计划只有子账号能管），再以子账号身份登录界面
+  const memberUser = 'ui-member';
+  const memberPwd = 'ui-member-123';
+  const ownerLogin = await fetch(BASE + '/api/admin/login', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ username: 'parent', password: PASSWORD }),
+  });
+  if (ownerLogin.ok) {
+    const { token: ownerToken } = await ownerLogin.json();
+    const probe = await fetch(BASE + '/api/admin/login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username: memberUser, password: memberPwd }),
+    });
+    if (!probe.ok) {
+      await fetch(BASE + '/api/accounts', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${ownerToken}` },
+        body: JSON.stringify({ username: memberUser, password: memberPwd }),
+      });
+    }
+  }
+
+  doc.getElementById('username').value = memberUser;
   const passwordInput = doc.getElementById('password');
-  passwordInput.value = PASSWORD;
+  passwordInput.value = memberPwd;
   doc.getElementById('login-form').dispatchEvent(new window.Event('submit', { cancelable: true, bubbles: true }));
 
   const appShown = await waitFor(() => !doc.getElementById('app').classList.contains('hidden'));
@@ -169,7 +195,13 @@ async function main() {
   check('设置页渲染', Boolean(settingsReady));
   check('学生区有配对码按钮', doc.querySelectorAll('#tab-settings [data-pair]').length > 0);
   check('设备区可撤销', doc.querySelectorAll('#tab-settings [data-revoke]').length > 0);
-  check('有扫描目录按钮', Boolean(doc.getElementById('do-scan')));
+  check('子账号看不到内容维护', !doc.getElementById('do-scan'));
+  check('子账号看不到「账号」标签',
+    doc.querySelector('#tabs button[data-tab="accounts"]').classList.contains('hidden'));
+  check('子账号看不到「内容库」标签',
+    doc.querySelector('#tabs button[data-tab="library"]').classList.contains('hidden'));
+  check('子账号能看到「计划」标签',
+    !doc.querySelector('#tabs button[data-tab="plan"]').classList.contains('hidden'));
 
   // 学生管理：改每日目标时长
   // 学生管理：按周一到周日设置目标

@@ -61,11 +61,54 @@ async def init_db() -> None:
                 # 列已存在（或数据库不支持 IF NOT EXISTS）就跳过
                 pass
 
+    await _bootstrap_family()
+
+
+async def _bootstrap_family() -> None:
+    """老库升级：把现有学生挂到默认家庭下，并建一个主账号。
+
+    新装也一样——首次启动建「我的家」+ 主账号 parent，密码取 PARENT_PASSWORD。
+    """
+    from sqlalchemy import select, update
+
+    from .models import Account, Family, Student
+    from .security import hash_password
+
+    async with SessionLocal() as session:
+        family = (await session.execute(select(Family).order_by(Family.id))).scalars().first()
+        if family is None:
+            family = Family(name="我的家")
+            session.add(family)
+            await session.flush()
+
+        # 没有归属的学生（老数据）统一挂到默认家庭
+        await session.execute(
+            update(Student).where(Student.family_id.is_(None)).values(family_id=family.id)
+        )
+
+        has_owner = (
+            await session.execute(
+                select(Account.id).where(Account.family_id == family.id, Account.role == "owner")
+            )
+        ).first()
+        if has_owner is None:
+            session.add(
+                Account(
+                    family_id=family.id,
+                    username="parent",
+                    password_hash=hash_password(settings.parent_password),
+                    role="owner",
+                    display_name="主账号",
+                )
+            )
+        await session.commit()
+
 
 # 后加的列：老库升级时需要补上，新库 create_all 已经建好
 ADDED_COLUMNS = [
     "ALTER TABLE student ADD COLUMN level VARCHAR(8)",
     "ALTER TABLE student ADD COLUMN weekday_targets JSON",
+    "ALTER TABLE student ADD COLUMN family_id INTEGER",
     "ALTER TABLE plan ADD COLUMN source VARCHAR(16) DEFAULT 'manual'",
     "ALTER TABLE video ADD COLUMN speech_ms INTEGER DEFAULT 0",
     "ALTER TABLE video ADD COLUMN speech_pct FLOAT DEFAULT 0",

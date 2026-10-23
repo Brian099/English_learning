@@ -1,4 +1,4 @@
-from datetime import datetime
+﻿from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, Field
@@ -8,7 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from ..db import get_db
 from ..level import analyze_text
 from ..models import Series, Transcript, Video
-from ..security import current_device, read_auth, require_parent
+from ..security import current_device, read_auth, require_owner
 
 router = APIRouter(prefix="/api", tags=["ingest"])
 
@@ -38,7 +38,7 @@ class ManifestBody(BaseModel):
     source: str | None = None
 
 
-@router.post("/import/manifest", dependencies=[Depends(require_parent)])
+@router.post("/import/manifest", dependencies=[Depends(require_owner)])
 async def import_manifest(body: ManifestBody, db: AsyncSession = Depends(get_db)) -> dict:
     """把预处理清单灌进库：按 video_out 路径做 upsert，重复导入幂等。"""
     created = updated = skipped = 0
@@ -98,7 +98,7 @@ class TranscriptBody(BaseModel):
     params_hash: str | None = None
 
 
-@router.post("/videos/{video_id}/transcript", dependencies=[Depends(require_parent)])
+@router.post("/videos/{video_id}/transcript", dependencies=[Depends(require_owner)])
 async def upsert_transcript(
     video_id: int, body: TranscriptBody, db: AsyncSession = Depends(get_db)
 ) -> dict:

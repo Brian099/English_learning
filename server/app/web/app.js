@@ -1,7 +1,10 @@
-'use strict';
+﻿'use strict';
 
 const state = {
   token: localStorage.getItem('token') || '',
+  role: localStorage.getItem('role') || '',          // owner | member
+  family: localStorage.getItem('family') || '',
+  username: localStorage.getItem('username') || '',
   tab: 'dashboard',
   students: [],
   series: [],
@@ -65,27 +68,56 @@ function showLogin() {
 function showApp() {
   document.getElementById('login').classList.add('hidden');
   document.getElementById('app').classList.remove('hidden');
+  applyRole();
   switchTab(state.tab);
 }
 
 function logout() {
   state.token = '';
-  localStorage.removeItem('token');
+  state.role = '';
+  ['token', 'role', 'family', 'username'].forEach((key) => localStorage.removeItem(key));
   showLogin();
+}
+
+/** 按角色显示/隐藏标签页 */
+function applyRole() {
+  document.querySelectorAll('#tabs button[data-tab]').forEach((button) => {
+    const roles = (button.dataset.roles || '').split(/\s+/).filter(Boolean);
+    const allowed = !roles.length || roles.includes(state.role);
+    button.classList.toggle('hidden', !allowed);
+  });
+  const who = document.getElementById('who');
+  if (who) {
+    who.textContent = state.role
+      ? `${state.family || ''} · ${state.role === 'owner' ? '主账号' : '子账号'}`
+      : '';
+  }
+  const first = [...document.querySelectorAll('#tabs button[data-tab]')]
+    .find((b) => !b.classList.contains('hidden'));
+  if (first && !document.querySelector(`#tabs button[data-tab="${state.tab}"]:not(.hidden)`)) {
+    state.tab = first.dataset.tab;
+  }
 }
 
 document.getElementById('login-form').addEventListener('submit', async (event) => {
   event.preventDefault();
+  const username = document.getElementById('username').value.trim() || 'parent';
   const password = document.getElementById('password').value;
   const errorEl = document.getElementById('login-error');
   errorEl.textContent = '';
   try {
     const data = await api('/api/admin/login', {
       method: 'POST',
-      body: JSON.stringify({ password }),
+      body: JSON.stringify({ username, password }),
     });
     state.token = data.token;
+    state.role = data.role || '';
+    state.family = data.family || '';
+    state.username = data.username || username;
     localStorage.setItem('token', data.token);
+    localStorage.setItem('role', state.role);
+    localStorage.setItem('family', state.family);
+    localStorage.setItem('username', state.username);
     showApp();
   } catch (err) {
     errorEl.textContent = err.message;
@@ -107,12 +139,13 @@ function switchTab(tab) {
   document.querySelectorAll('#tabs button').forEach((b) => {
     b.classList.toggle('active', b.dataset.tab === tab);
   });
-  ['dashboard', 'library', 'plan', 'settings'].forEach((name) => {
+  ['dashboard', 'library', 'plan', 'accounts', 'settings'].forEach((name) => {
     document.getElementById(`tab-${name}`).classList.toggle('hidden', name !== tab);
   });
   if (tab === 'dashboard') renderDashboard();
   if (tab === 'library') renderLibrary();
   if (tab === 'plan') renderPlan();
+  if (tab === 'accounts') renderAccounts();
   if (tab === 'settings') renderSettings();
 }
 
@@ -381,10 +414,184 @@ async function autoPlan() {
   }
 }
 
+/* ------------------------------------------------------------- 账号（主账号） */
+
+async function renderAccounts() {
+  const root = document.getElementById('tab-accounts');
+  root.innerHTML = '<div class="empty">加载中…</div>';
+  try {
+    const accounts = await api('/api/accounts');
+    const rows = accounts.map((a) => `
+      <div class="item">
+        <div class="grow">
+          <div class="title">${esc(a.display_name || a.username)}
+            <span class="muted small">${a.role === 'owner' ? '主账号' : '子账号'}</span></div>
+          <div class="meta">用户名 ${esc(a.username)}${a.active ? '' : ' · 已停用'}</div>
+        </div>
+        ${a.role === 'owner' ? '' : `
+          <button class="ghost small" data-reset="${a.id}" data-name="${esc(a.username)}">改密码</button>
+          <button class="ghost small" data-del="${a.id}">删除</button>`}
+      </div>`).join('') || '<div class="empty">还没有子账号</div>';
+
+    root.innerHTML = `
+      <div class="card">
+        <h2>家庭</h2>
+        <div class="row">
+          <input type="text" id="family-name" value="${esc(state.family)}" placeholder="家庭名称">
+          <button id="save-family">保存</button>
+        </div>
+        <p class="muted" style="margin:10px 0 0">
+          一个账号对应一个家庭。主账号负责家庭设置、子账号和内容维护；
+          子账号负责学生和计划。
+        </p>
+      </div>
+      <div class="card">
+        <h2>账号</h2>
+        <div class="list">${rows}</div>
+        <div class="row" style="margin-top:12px">
+          <input type="text" id="new-username" placeholder="子账号用户名">
+          <input type="password" id="new-password" placeholder="密码（≥6 位）">
+          <button id="add-account">添加子账号</button>
+        </div>
+      </div>`;
+
+    document.getElementById('save-family').addEventListener('click', async () => {
+      const name = document.getElementById('family-name').value.trim();
+      if (!name) return;
+      try {
+        const saved = await api('/api/family', {
+          method: 'PATCH', body: JSON.stringify({ name }),
+        });
+        state.family = saved.name;
+        localStorage.setItem('family', saved.name);
+        applyRole();
+        toast('已保存');
+      } catch (err) { toast(err.message); }
+    });
+
+    document.getElementById('add-account').addEventListener('click', async () => {
+      const username = document.getElementById('new-username').value.trim();
+      const password = document.getElementById('new-password').value;
+      if (!username || password.length < 6) { toast('用户名必填，密码至少 6 位'); return; }
+      try {
+        await api('/api/accounts', {
+          method: 'POST', body: JSON.stringify({ username, password }),
+        });
+        toast('已添加子账号');
+        renderAccounts();
+      } catch (err) { toast(err.message); }
+    });
+
+    root.querySelectorAll('[data-reset]').forEach((el) => {
+      el.addEventListener('click', async () => {
+        const pwd = prompt(`给「${el.dataset.name}」设置新密码（至少 6 位）`);
+        if (!pwd) return;
+        try {
+          await api(`/api/accounts/${el.dataset.reset}`, {
+            method: 'PATCH', body: JSON.stringify({ password: pwd }),
+          });
+          toast('密码已更新');
+        } catch (err) { toast(err.message); }
+      });
+    });
+
+    root.querySelectorAll('[data-del]').forEach((el) => {
+      el.addEventListener('click', async () => {
+        if (!confirm('确定删除这个子账号？')) return;
+        try {
+          await api(`/api/accounts/${el.dataset.del}`, { method: 'DELETE' });
+          toast('已删除');
+          renderAccounts();
+        } catch (err) { toast(err.message); }
+      });
+    });
+  } catch (err) {
+    root.innerHTML = `<div class="card"><div class="empty">${esc(err.message)}</div></div>`;
+  }
+}
+
 /* ------------------------------------------------------------- 设置 */
+
+async function renderOwnerSettings(root) {
+  root.innerHTML = `
+    <div class="card">
+      <h2>家庭</h2>
+      <div class="row">
+        <input type="text" id="family-name" value="${esc(state.family)}" placeholder="家庭名称">
+        <button id="save-family">保存</button>
+      </div>
+      <p class="muted" style="margin:10px 0 0">
+        主账号：内容维护 + 家庭与子账号。学生和计划由子账号管理。
+      </p>
+    </div>
+    <div class="card">
+      <h2>内容维护</h2>
+      <div class="row">
+        <button id="do-scan">扫描视频目录</button>
+        <button id="do-import" class="hidden">导入并处理</button>
+        <button id="do-audio" class="ghost">补跑入库（失败重试）</button>
+      </div>
+      <div id="scan-result" class="muted" style="margin-top:10px;line-height:1.7"></div>
+      <span class="muted" id="maintenance-status"></span>
+      <p class="muted" style="margin:10px 0 0">
+        扫描只做检测，不写库、不处理。确认数字后再点「导入并处理」。
+        文件名请自己整理（第一层文件夹名 = 系列名），程序不改名。
+      </p>
+    </div>`;
+
+  document.getElementById('save-family').addEventListener('click', async () => {
+    const name = document.getElementById('family-name').value.trim();
+    if (!name) return;
+    try {
+      const saved = await api('/api/family', { method: 'PATCH', body: JSON.stringify({ name }) });
+      state.family = saved.name;
+      localStorage.setItem('family', saved.name);
+      applyRole();
+      toast('已保存');
+    } catch (err) { toast(err.message); }
+  });
+
+  wireMaintenance();
+}
+
+/** 内容维护按钮接线（主账号设置页用） */
+function wireMaintenance() {
+  document.getElementById('do-scan').addEventListener('click', async () => {
+    const resultEl = document.getElementById('scan-result');
+    const importBtn = document.getElementById('do-import');
+    resultEl.textContent = '正在检测…';
+    importBtn.classList.add('hidden');
+    try {
+      const data = await api('/api/scan/preview', { method: 'POST' });
+      renderScanResult(data);
+    } catch (err) {
+      resultEl.textContent = err.message;
+    }
+  });
+
+  document.getElementById('do-import').addEventListener('click', async () => {
+    const resultEl = document.getElementById('scan-result');
+    const importBtn = document.getElementById('do-import');
+    try {
+      const result = await api('/api/scan', { method: 'POST' });
+      const parts = [`新增 ${result.added || 0}`, `更新 ${result.updated || 0}`];
+      if (result.removed) parts.push(`清理 ${result.removed}`);
+      toast(parts.join('，') + (result.ingest_started ? '，开始处理' : ''));
+      importBtn.classList.add('hidden');
+      resultEl.textContent = parts.join(' · ') + (result.warning ? `　⚠ ${result.warning}` : '');
+      if (result.warning) resultEl.textContent = `⚠ ${result.warning}`;
+      if (result.ingest_started) watchIngest(result.ingest_count);
+    } catch (err) {
+      toast(err.message);
+    }
+  });
+
+  document.getElementById('do-audio').addEventListener('click', startAudioExtraction);
+}
 
 async function renderSettings() {
   const root = document.getElementById('tab-settings');
+  if (state.role === 'owner') return renderOwnerSettings(root);
   root.innerHTML = '<div class="empty">加载中…</div>';
   try {
     state.students = await api('/api/students');
@@ -441,20 +648,6 @@ async function renderSettings() {
         <h2>设备</h2>
         <div class="list">${deviceRows}</div>
         <div class="muted" style="margin-top:10px">在平板上输入 6 位配对码即可绑定</div>
-      </div>
-      <div class="card">
-        <h2>内容维护</h2>
-        <div class="row">
-          <button id="do-scan">扫描视频目录</button>
-          <button id="do-import" class="hidden">导入并处理</button>
-          <button id="do-audio" class="ghost">补跑入库（失败重试）</button>
-        </div>
-        <div id="scan-result" class="muted" style="margin-top:10px;line-height:1.7"></div>
-        <span class="muted" id="maintenance-status"></span>
-        <p class="muted" style="margin:10px 0 0">
-          扫描只做检测，不写库、不处理。确认数字后再点「导入并处理」。
-          文件名请自己整理（第一层文件夹名 = 系列名），程序不改名。
-        </p>
       </div>
       <div class="card">
         <h2>学生端</h2>
@@ -553,38 +746,6 @@ async function renderSettings() {
       });
     });
 
-    document.getElementById('do-scan').addEventListener('click', async () => {
-      const resultEl = document.getElementById('scan-result');
-      const importBtn = document.getElementById('do-import');
-      resultEl.textContent = '正在检测…';
-      importBtn.classList.add('hidden');
-      try {
-        const data = await api('/api/scan/preview', { method: 'POST' });
-        renderScanResult(data);
-      } catch (err) {
-        resultEl.textContent = err.message;
-      }
-    });
-
-    document.getElementById('do-import').addEventListener('click', async () => {
-      const resultEl = document.getElementById('scan-result');
-      const importBtn = document.getElementById('do-import');
-      try {
-        const result = await api('/api/scan', { method: 'POST' });
-        const parts = [`新增 ${result.added || 0}`, `更新 ${result.updated || 0}`];
-        if (result.removed) parts.push(`清理 ${result.removed}`);
-        toast(parts.join('，') + (result.ingest_started ? '，开始处理' : ''));
-        importBtn.classList.add('hidden');
-        resultEl.textContent = parts.join(' · ') + (result.warning ? `　⚠ ${result.warning}` : '');
-        if (result.warning) resultEl.textContent = `⚠ ${result.warning}`;
-        if (result.ingest_started) watchIngest(result.ingest_count);
-        else await renderSettings();
-      } catch (err) {
-        toast(err.message);
-      }
-    });
-
-    document.getElementById('do-audio').addEventListener('click', startAudioExtraction);
   } catch (err) {
     root.innerHTML = `<div class="card"><div class="empty">${esc(err.message)}</div></div>`;
   }

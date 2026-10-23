@@ -9,10 +9,37 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from .config import settings
 from .db import get_db
-from .models import Device
+from .models import Account, Device, Student
 
 _serializer = URLSafeTimedSerializer(settings.app_secret, salt="kids-listening-parent")
 
+PBKDF2_ROUNDS = 120_000
+
+
+# ------------------------------------------------------------------ 密码
+
+def hash_password(password: str) -> str:
+    salt = secrets.token_hex(16)
+    digest = hashlib.pbkdf2_hmac(
+        "sha256", password.encode(), bytes.fromhex(salt), PBKDF2_ROUNDS
+    ).hex()
+    return f"pbkdf2${salt}${digest}"
+
+
+def verify_password(password: str, stored: str) -> bool:
+    try:
+        algo, salt, digest = stored.split("$")
+    except (AttributeError, ValueError):
+        return False
+    if algo != "pbkdf2":
+        return False
+    calc = hashlib.pbkdf2_hmac(
+        "sha256", password.encode(), bytes.fromhex(salt), PBKDF2_ROUNDS
+    ).hex()
+    return secrets.compare_digest(calc, digest)
+
+
+# ------------------------------------------------------------------ 令牌
 
 def hash_token(token: str) -> str:
     return hashlib.sha256(token.encode()).hexdigest()
@@ -22,17 +49,27 @@ def new_token(nbytes: int = 32) -> str:
     return secrets.token_urlsafe(nbytes)
 
 
-def issue_parent_token() -> str:
-    return _serializer.dumps({"role": "parent"})
+def issue_account_token(account: Account) -> str:
+    return _serializer.dumps(
+        {
+            "kind": "account",
+            "account_id": account.id,
+            "family_id": account.family_id,
+            "role": account.role,
+        }
+    )
 
 
-def _verify_parent_token(token: str) -> None:
+def _load_account_payload(token: str) -> dict:
     try:
-        _serializer.loads(token, max_age=settings.token_days * 86400)
+        payload = _serializer.loads(token, max_age=settings.token_days * 86400)
     except SignatureExpired as exc:
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "登录已过期") from exc
     except BadSignature as exc:
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "令牌无效") from exc
+    if payload.get("kind") != "account":
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "令牌无效")
+    return payload
 
 
 def _bearer(authorization: str | None) -> str | None:
@@ -42,12 +79,34 @@ def _bearer(authorization: str | None) -> str | None:
     return value if scheme.lower() == "bearer" and value else None
 
 
-async def require_parent(authorization: str | None = Header(None)) -> None:
-    """家长端接口守卫。"""
+# ------------------------------------------------------------------ 守卫
+
+async def current_account(
+    authorization: str | None = Header(None), db: AsyncSession = Depends(get_db)
+) -> Account:
+    """登录账号守卫。"""
     token = _bearer(authorization)
     if not token:
-        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "需要家长登录")
-    _verify_parent_token(token)
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "需要登录")
+    payload = _load_account_payload(token)
+    account = await db.get(Account, payload["account_id"])
+    if account is None or not account.active:
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "账号不存在或已停用")
+    return account
+
+
+async def require_owner(account: Account = Depends(current_account)) -> Account:
+    """主账号：家庭、子账号、内容维护。"""
+    if account.role != "owner":
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "需要主账号权限")
+    return account
+
+
+async def require_member(account: Account = Depends(current_account)) -> Account:
+    """子账号：学生与计划管理。主账号不能代劳。"""
+    if account.role != "member":
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "需要子账号权限")
+    return account
 
 
 async def current_device(
@@ -68,23 +127,36 @@ async def current_device(
     return device
 
 
+async def device_family_id(db: AsyncSession, device: Device) -> int | None:
+    student = await db.get(Student, device.student_id)
+    return student.family_id if student else None
+
+
 async def read_auth(
     authorization: str | None = Header(None),
     token: str | None = Query(None),
     db: AsyncSession = Depends(get_db),
 ) -> dict:
-    """只读接口：家长令牌或设备令牌都放行。
+    """只读接口：账号令牌或设备令牌都放行。
 
-    家长 Web 端要看内容库和转写，孩子端 App 也要看，所以这里放宽。
-    写操作仍然严格区分（家长用 require_parent，上报事件用 current_device）。
+    返回 {kind, role, account_id?, family_id, student_id?}，
+    调用方据此做家庭隔离。
     """
     raw = _bearer(authorization) or token
     if not raw:
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "缺少令牌")
 
     try:
-        _verify_parent_token(raw)
-        return {"role": "parent", "student_id": None}
+        payload = _load_account_payload(raw)
+        account = await db.get(Account, payload["account_id"])
+        if account is not None and account.active:
+            return {
+                "kind": "account",
+                "role": account.role,
+                "account_id": account.id,
+                "family_id": account.family_id,
+                "student_id": None,
+            }
     except HTTPException:
         pass
 
@@ -94,4 +166,11 @@ async def read_auth(
     if device is None:
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "令牌无效")
     device.last_seen_at = datetime.now(UTC)
-    return {"role": "device", "student_id": device.student_id}
+    student = await db.get(Student, device.student_id)
+    return {
+        "kind": "device",
+        "role": "device",
+        "account_id": None,
+        "family_id": student.family_id if student else None,
+        "student_id": device.student_id,
+    }

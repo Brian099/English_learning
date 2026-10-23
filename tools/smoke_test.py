@@ -56,11 +56,32 @@ def main() -> int:
     check("GET / 返回前端页面", "英语磨耳朵" in html, f"{len(html)} 字节")
     check("GET /app.js 可访问", "state" in urllib.request.urlopen(base + "/app.js", timeout=15).read().decode())
 
-    print("\n2. 家长登录与鉴权")
-    token = call(base, "/api/admin/login", "POST", {"password": args.password})["token"]
-    check("POST /api/admin/login", bool(token))
-    check("错误密码被拒", call(base, "/api/admin/login", "POST", {"password": "wrong"}, expect_error=True).get("__status") == 401)
+    print("\n2. 账号登录与权限")
+    owner = call(base, "/api/admin/login", "POST",
+                 {"username": "parent", "password": args.password})["token"]
+    check("主账号登录", bool(owner))
+    check("错误密码被拒",
+          call(base, "/api/admin/login", "POST",
+               {"username": "parent", "password": "wrong"}, expect_error=True).get("__status") == 401)
     check("无令牌访问被拒", call(base, "/api/students", expect_error=True).get("__status") == 401)
+
+    # 子账号：没有就建一个（学生和计划只能子账号管）
+    member_name, member_pwd = "smoke-member", "smoke123456"
+    probe = call(base, "/api/admin/login", "POST",
+                 {"username": member_name, "password": member_pwd}, expect_error=True)
+    if probe.get("__status") == 401:
+        call(base, "/api/accounts", "POST",
+             {"username": member_name, "password": member_pwd, "display_name": "冒烟子账号"}, owner)
+    token = call(base, "/api/admin/login", "POST",
+                 {"username": member_name, "password": member_pwd})["token"]
+    check("子账号登录", bool(token))
+
+    check("主账号不能管学生", call(base, "/api/students", token=owner, expect_error=True).get("__status") == 403)
+    check("子账号不能做内容维护",
+          call(base, "/api/scan/preview", "POST", token=token, expect_error=True).get("__status") == 403)
+    check("子账号不能管账号",
+          call(base, "/api/accounts", token=token, expect_error=True).get("__status") == 403)
+    check("子账号可以看内容库", call(base, "/api/videos?limit=1", token=token) is not None)
 
     print("\n3. 学生")
     students = call(base, "/api/students", token=token)

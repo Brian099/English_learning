@@ -97,10 +97,38 @@ class Transcript(Base):
     )
 
 
+class Family(Base):
+    """一个家庭 = 一个租户。学生、计划、播放记录都归属到家庭。"""
+
+    __tablename__ = "family"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    name: Mapped[str] = mapped_column(String(100), default="我的家")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class Account(Base):
+    """登录账号。role=owner 管家庭/子账号/内容；role=member 管学生/计划。"""
+
+    __tablename__ = "account"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    family_id: Mapped[int] = mapped_column(ForeignKey("family.id", ondelete="CASCADE"), index=True)
+    username: Mapped[str] = mapped_column(String(64), unique=True)
+    password_hash: Mapped[str] = mapped_column(String(128))
+    role: Mapped[str] = mapped_column(String(16), default="member")   # owner | member
+    display_name: Mapped[str | None] = mapped_column(String(64))
+    active: Mapped[bool] = mapped_column(Boolean, default=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
 class Student(Base):
     __tablename__ = "student"
 
     id: Mapped[int] = mapped_column(primary_key=True)
+    family_id: Mapped[int | None] = mapped_column(
+        ForeignKey("family.id", ondelete="CASCADE"), index=True
+    )
     name: Mapped[str] = mapped_column(String(100))
     avatar: Mapped[str | None] = mapped_column(String(200))
     daily_target_min: Mapped[int] = mapped_column(Integer, default=20)

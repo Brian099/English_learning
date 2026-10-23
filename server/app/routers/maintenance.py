@@ -1,4 +1,4 @@
-"""维护任务接口：入库流水线（转音频 + 提取对白）。
+﻿"""维护任务接口：入库流水线（转音频 + 提取对白）。
 
 真正的活儿在 app/pipeline.py，这里只负责触发和查进度。
 """
@@ -13,12 +13,12 @@ from ..config import settings
 from ..db import get_db
 from ..media_tools import ffmpeg
 from ..models import Transcript, Video
-from ..security import require_parent
+from ..security import require_owner
 
 router = APIRouter(prefix="/api/maintenance", tags=["maintenance"])
 
 
-@router.post("/ingest", dependencies=[Depends(require_parent)])
+@router.post("/ingest", dependencies=[Depends(require_owner)])
 async def start_ingest(
     background: BackgroundTasks,
     only_pending: bool = True,
@@ -56,18 +56,18 @@ async def start_ingest(
 
 
 # 兼容旧调用：只想要音轨的场景也走同一条流水线
-@router.post("/extract-audio", dependencies=[Depends(require_parent)])
+@router.post("/extract-audio", dependencies=[Depends(require_owner)])
 async def extract_audio_alias(
     background: BackgroundTasks, db: AsyncSession = Depends(get_db)
 ) -> dict:
     return await start_ingest(background, only_pending=False, db=db)
 
 
-@router.get("/status", dependencies=[Depends(require_parent)])
+@router.get("/status", dependencies=[Depends(require_owner)])
 async def maintenance_status() -> dict:
     return pipeline.state()
 
 
-@router.get("/pending", dependencies=[Depends(require_parent)])
+@router.get("/pending", dependencies=[Depends(require_owner)])
 async def pending() -> dict:
     return {"pending": await pipeline.pending_count(), "model": settings.whisper_model}

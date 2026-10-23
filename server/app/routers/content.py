@@ -1,4 +1,4 @@
-from pathlib import Path
+﻿from pathlib import Path
 from zoneinfo import ZoneInfo
 
 import mimetypes
@@ -12,11 +12,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..config import settings
 from ..db import get_db
-from ..models import Plan, PlanItem, Series, Student, Video
+from ..models import Account, Plan, PlanItem, Series, Student, Video
 from ..pipeline import run_ingest
 from ..scan import scan_media, scan_preview
 from ..scheduler import build_daily_plan, target_for_day
-from ..security import read_auth, require_parent
+from ..security import read_auth, require_member, require_owner
 
 router = APIRouter(prefix="/api", tags=["content"])
 
@@ -52,9 +52,15 @@ class VideoPatch(BaseModel):
 
 # ------------------------------------------------------------------ students
 
-@router.get("/students", dependencies=[Depends(require_parent)])
-async def list_students(db: AsyncSession = Depends(get_db)) -> list[dict]:
-    rows = (await db.execute(select(Student).order_by(Student.id))).scalars().all()
+@router.get("/students")
+async def list_students(
+    account: Account = Depends(require_member), db: AsyncSession = Depends(get_db)
+) -> list[dict]:
+    rows = (
+        await db.execute(
+            select(Student).where(Student.family_id == account.family_id).order_by(Student.id)
+        )
+    ).scalars().all()
     return [
         {
             "id": s.id,
@@ -67,9 +73,17 @@ async def list_students(db: AsyncSession = Depends(get_db)) -> list[dict]:
     ]
 
 
-@router.post("/students", dependencies=[Depends(require_parent)])
-async def create_student(body: StudentBody, db: AsyncSession = Depends(get_db)) -> dict:
-    student = Student(name=body.name, daily_target_min=body.daily_target_min)
+@router.post("/students")
+async def create_student(
+    body: StudentBody,
+    account: Account = Depends(require_member),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    student = Student(
+        name=body.name,
+        daily_target_min=body.daily_target_min,
+        family_id=account.family_id,
+    )
     if body.weekday_targets:
         student.weekday_targets = _clean_weekday_targets(body.weekday_targets,
                                                          body.daily_target_min)
@@ -91,12 +105,15 @@ def _clean_weekday_targets(raw: list[int], default: int) -> list[int]:
     return out
 
 
-@router.patch("/students/{student_id}", dependencies=[Depends(require_parent)])
+@router.patch("/students/{student_id}")
 async def patch_student(
-    student_id: int, body: StudentBody, db: AsyncSession = Depends(get_db)
+    student_id: int,
+    body: StudentBody,
+    account: Account = Depends(require_member),
+    db: AsyncSession = Depends(get_db),
 ) -> dict:
     student = await db.get(Student, student_id)
-    if student is None:
+    if student is None or student.family_id != account.family_id:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "学生不存在")
 
     target_changed = student.daily_target_min != body.daily_target_min
@@ -242,7 +259,7 @@ async def list_videos(
     }
 
 
-@router.patch("/videos/{video_id}", dependencies=[Depends(require_parent)])
+@router.patch("/videos/{video_id}", dependencies=[Depends(require_owner)])
 async def patch_video(
     video_id: int, body: VideoPatch, db: AsyncSession = Depends(get_db)
 ) -> dict:
@@ -257,7 +274,7 @@ async def patch_video(
 
 # --------------------------------------------------------------------- scan
 
-@router.post("/scan/preview", dependencies=[Depends(require_parent)])
+@router.post("/scan/preview", dependencies=[Depends(require_owner)])
 async def scan_preview_endpoint(db: AsyncSession = Depends(get_db)) -> dict:
     """只检测媒体目录，不写库、不触发处理。
 
@@ -267,7 +284,7 @@ async def scan_preview_endpoint(db: AsyncSession = Depends(get_db)) -> dict:
     return await scan_preview(db)
 
 
-@router.post("/scan", dependencies=[Depends(require_parent)])
+@router.post("/scan", dependencies=[Depends(require_owner)])
 async def scan(background: BackgroundTasks, db: AsyncSession = Depends(get_db)) -> dict:
     """真正导入：把新增/变化的文件写进库。
 
