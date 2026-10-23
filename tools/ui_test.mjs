@@ -216,8 +216,9 @@ async function main() {
   const weekdayInputs = firstRow.querySelectorAll('[data-weekday]');
   check('有 7 个星期输入框', weekdayInputs.length === 7, `${weekdayInputs.length} 个`);
 
-  const setAll = (value) => [...doc.querySelectorAll('#tab-settings [data-student-row]')[0].querySelectorAll('[data-weekday]')]
-    .forEach((input) => { input.value = String(value); });
+  const setAll = (value) => [...doc.querySelectorAll('#tab-settings [data-student-row]')[0]
+    .querySelectorAll('[data-weekday]')].forEach((input) => { input.value = String(value); });
+  const originalTarget = doc.querySelector('#tab-settings [data-student-row] [data-weekday]').value;
   setAll(35);
   doc.querySelector('#tab-settings [data-edit-save]')
     .dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
@@ -231,12 +232,12 @@ async function main() {
   // 还原
   doc.querySelector('#tab-settings [data-edit-btn]')
     .dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
-  setAll(20);
+  setAll(originalTarget);
   doc.querySelector('#tab-settings [data-edit-save]')
     .dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
   await waitFor(() => {
     const el = doc.querySelector('#tab-settings [data-student-row] [data-view] .meta');
-    return el && textOf(el).includes('20');
+    return el && textOf(el).includes(originalTarget);
   });
 
 

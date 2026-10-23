@@ -400,3 +400,23 @@ body {
   font-weight: 500;
 }
 .badge.l1 { background: #e6f7ee; color: #12855a; }
+/* ---------- 表单控件与按钮尺寸对齐 ---------- */
+.toolbar > .form-control,
+.toolbar > .form-select {
+  width: auto;
+  min-width: 140px;
+}
+.toolbar > .btn { flex: none; }
+
+/* 编辑区里的小控件 */
+.weekday-input {
+  width: 62px;
+  display: inline-block;
+  padding-left: 6px;
+  padding-right: 4px;
+  text-align: center;
+}
+.item .btn { flex: none; }
+
+/* 让 chip 与 Bootstrap 按钮高度一致 */
+.chip { line-height: 1.4; }

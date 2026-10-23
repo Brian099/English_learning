@@ -1,4 +1,4 @@
-﻿'use strict';
+'use strict';
 
 const state = {
   token: localStorage.getItem('token') || '',
@@ -411,8 +411,8 @@ async function renderPlan() {
     root.innerHTML = `
       <div class="card">
         <div class="toolbar">
-          <select id="plan-student">${studentOptions}</select>
-          <button id="plan-auto" class="btn btn-sm btn-outline-secondary">✨ 重排今日</button>
+          <select id="plan-student" class="form-select" style="width:auto;min-width:140px">${studentOptions}</select>
+          <button id="plan-auto" class="btn btn-outline-secondary">✨ 重排今日</button>
           <span class="muted" id="plan-hint"></span>
         </div>
         <div class="muted" style="margin-top:8px;line-height:1.6">
@@ -513,7 +513,7 @@ async function renderAccounts() {
       <div class="card">
         <h2>家庭</h2>
         <div class="toolbar">
-          <input type="text" id="family-name" value="${esc(state.family)}" placeholder="家庭名称">
+          <input type="text" id="family-name" class="form-control" value="${esc(state.family)}" placeholder="家庭名称">
           <button id="save-family" class="btn btn-primary">保存</button>
         </div>
         <p class="muted" style="margin:10px 0 0">
@@ -525,8 +525,8 @@ async function renderAccounts() {
         <h2>账号</h2>
         <div class="list">${rows}</div>
         <div class="toolbar" style="margin-top:12px">
-          <input type="text" id="new-username" placeholder="子账号用户名">
-          <input type="password" id="new-password" placeholder="密码（≥6 位）">
+          <input type="text" id="new-username" class="form-control" placeholder="子账号用户名">
+          <input type="password" id="new-password" class="form-control" placeholder="密码（≥6 位）">
           <button id="add-account" class="btn btn-primary">添加子账号</button>
         </div>
       </div>`;
@@ -591,21 +591,11 @@ async function renderAccounts() {
 async function renderOwnerSettings(root) {
   root.innerHTML = `
     <div class="card">
-      <h2>家庭</h2>
-      <div class="toolbar">
-        <input type="text" id="family-name" value="${esc(state.family)}" placeholder="家庭名称">
-        <button id="save-family" class="btn btn-primary">保存</button>
-      </div>
-      <p class="muted" style="margin:10px 0 0">
-        主账号：内容维护 + 家庭与子账号。学生和计划由子账号管理。
-      </p>
-    </div>
-    <div class="card">
       <h2>内容维护</h2>
       <div class="toolbar">
         <button id="do-scan" class="btn btn-primary">扫描视频目录</button>
         <button id="do-import" class="btn btn-primary hidden">导入并处理</button>
-        <button id="do-audio" class="btn btn-sm btn-outline-secondary">补跑入库（失败重试）</button>
+        <button id="do-audio" class="btn btn-outline-secondary">补跑入库（失败重试）</button>
       </div>
       <div id="scan-result" class="muted" style="margin-top:10px;line-height:1.7"></div>
       <span class="muted" id="maintenance-status"></span>
@@ -614,18 +604,6 @@ async function renderOwnerSettings(root) {
         文件名请自己整理（第一层文件夹名 = 系列名），程序不改名。
       </p>
     </div>`;
-
-  document.getElementById('save-family').addEventListener('click', async () => {
-    const name = document.getElementById('family-name').value.trim();
-    if (!name) return;
-    try {
-      const saved = await api('/api/family', { method: 'PATCH', body: JSON.stringify({ name }) });
-      state.family = saved.name;
-      localStorage.setItem('family', saved.name);
-      applyRole();
-      toast('已保存');
-    } catch (err) { toast(err.message); }
-  });
 
   wireMaintenance();
 }
@@ -680,8 +658,7 @@ async function renderSettings() {
       const summary = `周一~周日：${targets.join(' / ')} 分钟`;
       const weekdayInputs = weekdayNames.map((label, index) => `
         <label class="muted" style="display:flex;align-items:center;gap:3px;font-size:12px">
-          ${label}<input type="number" data-weekday="${index}" min="5" max="120" step="5"
-                        value="${targets[index] ?? s.daily_target_min}" style="width:52px">
+          ${label}<input type="number" data-weekday="${index}" class="form-control form-control-sm weekday-input" min="5" max="120" step="5" value="${targets[index] ?? s.daily_target_min}">
         </label>`).join('');
 
       return `
@@ -691,14 +668,13 @@ async function renderSettings() {
           <div class="meta">${summary}</div>
         </div>
         <div class="grow hidden" data-edit style="width:100%">
-          <input type="text" data-edit-name value="${esc(s.name)}" placeholder="姓名"
-                 style="width:140px;margin-bottom:8px">
+          <input type="text" data-edit-name class="form-control form-control-sm" value="${esc(s.name)}" placeholder="姓名" style="max-width:180px">
           <div style="display:flex;gap:8px;flex-wrap:wrap">${weekdayInputs}</div>
           <div class="muted" style="font-size:12px;margin-top:6px">
             周一到周日各自的目标分钟数；留空的那天用平均值
           </div>
         </div>
-        <button class="btn btn-sm btn-outline-secondary" data-edit-save="${s.id}" hidden>保存</button>
+        <button class="btn btn-sm btn-primary" data-edit-save="${s.id}" hidden>保存</button>
         <button class="btn btn-sm btn-outline-secondary" data-edit-btn="${s.id}">编辑</button>
         <button class="btn btn-sm btn-outline-secondary" data-pair="${s.id}">配对码</button>
       </div>`;
@@ -716,7 +692,7 @@ async function renderSettings() {
         <h2>学生</h2>
         <div class="list">${studentRows}</div>
         <div class="toolbar" style="margin-top:12px">
-          <input type="text" id="new-student" placeholder="学生姓名">
+          <input type="text" id="new-student" class="form-control" placeholder="学生姓名">
           <button id="add-student" class="btn btn-primary">添加</button>
         </div>
       </div>
