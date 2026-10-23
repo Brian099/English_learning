@@ -1,4 +1,4 @@
-import asyncio
+﻿import asyncio
 import hashlib
 import os
 import subprocess
@@ -30,7 +30,7 @@ async def _duration_ms(path: Path) -> int | None:
             result = subprocess.run(
                 [executable, "-v", "error", "-show_entries", "format=duration",
                  "-of", "default=nw=1:nk=1", str(path)],
-                capture_output=True, text=True, timeout=30,
+                capture_output=True, text=True, timeout=30, encoding="utf-8", errors="replace",
             )
             text = (result.stdout or "").strip()
             return int(float(text) * 1000) if text else None

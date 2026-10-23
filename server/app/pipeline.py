@@ -64,7 +64,7 @@ def _run_ffmpeg(args: list[str]) -> tuple[bool, str | None]:
     if executable is None:
         return False, "找不到 ffmpeg"
     result = subprocess.run([executable, "-y", "-hide_banner", "-loglevel", "error", *args],
-                            capture_output=True, text=True)
+                            capture_output=True, text=True, encoding="utf-8", errors="replace")
     if result.returncode != 0:
         return False, (result.stderr or "ffmpeg 失败")[:200]
     return True, None
@@ -78,7 +78,7 @@ def measure_loudness(src: Path) -> dict | None:
     result = subprocess.run(
         [executable, "-hide_banner", "-nostats", "-i", str(src), "-vn",
          "-af", "loudnorm=print_format=json", "-f", "null", os.devnull],
-        capture_output=True, text=True,
+        capture_output=True, text=True, encoding="utf-8", errors="replace",
     )
     text = result.stderr or ""
     values: dict[str, str] = {}
