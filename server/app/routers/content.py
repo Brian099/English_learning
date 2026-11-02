@@ -1,4 +1,4 @@
-from pathlib import Path
+﻿from pathlib import Path
 from zoneinfo import ZoneInfo
 
 import mimetypes
@@ -13,8 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from ..config import settings
 from ..db import get_db
 from ..models import Account, Plan, PlanItem, Series, Student, Video
-from ..pipeline import run_ingest
-from ..scan import scan_media, scan_preview
+from ..scan import run_scan, scan_preview, scan_state
 from ..scheduler import build_daily_plan, target_for_day
 from ..security import read_auth, require_member, require_owner
 
@@ -285,17 +284,23 @@ async def scan_preview_endpoint(db: AsyncSession = Depends(get_db)) -> dict:
 
 
 @router.post("/scan", dependencies=[Depends(require_owner)])
-async def scan(background: BackgroundTasks, db: AsyncSession = Depends(get_db)) -> dict:
-    """真正导入：把新增/变化的文件写进库。
+async def scan(background: BackgroundTasks) -> dict:
+    """开始导入（后台任务）。
 
-    默认导入后自动接着跑"转音频 + 提取对白"（AUTO_INGEST=0 可关闭）。
+    1923 个文件要跑几分钟，同步请求会被反代超时掐断，
+    所以这里立刻返回，前端轮询 /api/scan/status 看进度。
     """
-    result = await scan_media(db)
-    if settings.auto_ingest and result.get("ids"):
-        background.add_task(run_ingest, result["ids"])
-        result["ingest_started"] = True
-        result["ingest_count"] = len(result["ids"])
-    return result
+    state = scan_state()
+    if state["running"]:
+        return {"started": False, "already_running": True, **state}
+    background.add_task(run_scan, settings.auto_ingest)
+    return {"started": True}
+
+
+@router.get("/scan/status", dependencies=[Depends(require_owner)])
+async def scan_status() -> dict:
+    """扫描/导入进度。"""
+    return scan_state()
 
 
 # -------------------------------------------------------------------- media

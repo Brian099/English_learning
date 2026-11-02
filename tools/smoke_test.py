@@ -83,6 +83,15 @@ def main() -> int:
           call(base, "/api/families", token=token, expect_error=True).get("__status") == 403)
     check("子账号可以看内容库", call(base, "/api/videos?limit=1", token=token) is not None)
 
+    scan_start = call(base, "/api/scan", "POST", token=owner)
+    check("导入立刻返回（后台任务）", scan_start.get("started") is True, str(scan_start))
+    scan_status = call(base, "/api/scan/status", token=owner)
+    check("导入进度可查询",
+          "running" in scan_status and "total" in scan_status,
+          f"running={scan_status.get('running')} total={scan_status.get('total')}")
+    check("子账号不能触发导入",
+          call(base, "/api/scan", "POST", token=token, expect_error=True).get("__status") == 403)
+
     overview = call(base, "/api/overview", token=owner)
     check("主账号概览含资源统计",
           overview["content"]["videos"] >= 1 and overview["family"]["count"] >= 1,

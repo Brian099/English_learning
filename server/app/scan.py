@@ -1,4 +1,4 @@
-﻿import asyncio
+import asyncio
 import hashlib
 import os
 import subprocess
@@ -10,7 +10,32 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from .config import settings
 from .media_tools import ffprobe
 from .models import Series, Video
+from .db import SessionLocal
 
+_scan_state: dict = {
+    "running": False,
+    "stage": "",
+    "total": 0,
+    "done": 0,
+    "added": 0,
+    "updated": 0,
+    "skipped": 0,
+    "failed": 0,
+    "removed": 0,
+    "warning": None,
+    "error": None,
+    "started_at": None,
+    "finished_at": None,
+}
+
+
+def scan_state() -> dict:
+    return dict(_scan_state)
+
+
+def _now() -> str:
+    from datetime import datetime, timezone
+    return datetime.now(timezone.utc).isoformat()
 VIDEO_EXT = {".mp4", ".mkv", ".m4v", ".mov", ".webm", ".avi", ".flv", ".ts", ".wmv"}
 
 
@@ -177,72 +202,97 @@ async def scan_preview(db: AsyncSession) -> dict:
     }
 
 
-async def scan_media(db: AsyncSession) -> dict:
-    """增量扫描 MEDIA_ROOT：新增入库、变更更新、无变化跳过。"""
+async def scan_media(db: AsyncSession, progress: bool = False) -> dict:
+    """增量扫描 MEDIA_ROOT：新增入库、变更更新、无变化跳过。
+
+    1923 个文件时整个流程要几分钟，所以：
+    - 单个文件出错只跳过并计数，不让整次导入挂掉
+    - 每 50 个文件提交一次，避免长事务锁库
+    - progress=True 时把进度写进 _scan_state，前端可轮询
+    """
     root = Path(settings.media_root)
     if not root.is_dir():
         return {"error": f"media root not found: {root}", "added": 0, "updated": 0, "skipped": 0}
 
-    added = updated = skipped = 0
+    added = updated = skipped = failed = 0
     touched: list[Video] = []
 
-    for dirpath, _dirnames, filenames in os.walk(root):
-        for name in filenames:
-            path = Path(dirpath) / name
-            if path.suffix.lower() not in VIDEO_EXT:
-                continue
+    if progress:
+        _scan_state.update(stage="枚举文件", done=0, total=0)
+    files = _collect_files(root)
+    if progress:
+        _scan_state["total"] = len(files)
 
-            rel = path.relative_to(root).as_posix()
-            stat = path.stat()
-
+    for index, (rel, path, size, mtime) in enumerate(files, 1):
+        try:
             existing = (
                 await db.execute(select(Video).where(Video.rel_path == rel))
             ).scalar_one_or_none()
             # 时长为 0 说明上次探测失败过，即使文件没变也要重探一次
-            if (existing and existing.size_bytes == stat.st_size
-                    and existing.mtime == int(stat.st_mtime)
+            if (existing and existing.size_bytes == size
+                    and existing.mtime == mtime
                     and existing.duration_ms):
                 skipped += 1
-                continue
-
-            series_name = rel.split("/")[0] if "/" in rel else "未分类"
-            series = (
-                await db.execute(select(Series).where(Series.name == series_name))
-            ).scalar_one_or_none()
-            if series is None:
-                series = Series(name=series_name)
-                db.add(series)
-                await db.flush()
-
-            duration = await _duration_ms(path)
-            values = {
-                "title": Path(name).stem,
-                "series_id": series.id,
-                # ffprobe 失败时不要写 None（列是非空的）；更新已有记录时保留旧时长
-                "duration_ms": duration if duration is not None else (existing.duration_ms if existing else 0),
-                "size_bytes": stat.st_size,
-                "mtime": int(stat.st_mtime),
-                "file_hash": _quick_hash(path, stat.st_size),
-            }
-            if existing:
-                for key, value in values.items():
-                    setattr(existing, key, value)
-                updated += 1
-                touched.append(existing)
             else:
-                created = Video(rel_path=rel, **values)
-                db.add(created)
-                added += 1
-                touched.append(created)
+                series_name = rel.split("/")[0] if "/" in rel else "未分类"
+                series = (
+                    await db.execute(select(Series).where(Series.name == series_name))
+                ).scalar_one_or_none()
+                if series is None:
+                    series = Series(name=series_name)
+                    db.add(series)
+                    await db.flush()
+
+                duration = await _duration_ms(path)
+                values = {
+                    "title": Path(path.name).stem,
+                    "series_id": series.id,
+                    # ffprobe 失败时不要写 None（列是非空的）；更新已有记录时保留旧时长
+                    "duration_ms": duration if duration is not None
+                    else (existing.duration_ms if existing else 0),
+                    "size_bytes": size,
+                    "mtime": mtime,
+                    "file_hash": _quick_hash(path, size),
+                }
+                if existing:
+                    for key, value in values.items():
+                        setattr(existing, key, value)
+                    updated += 1
+                    touched.append(existing)
+                else:
+                    created = Video(rel_path=rel, **values)
+                    db.add(created)
+                    added += 1
+                    touched.append(created)
+        except Exception as exc:      # 单个文件坏了不能拖垮整次导入
+            failed += 1
+            _scan_state["error"] = f"{rel}: {str(exc)[:160]}"
+            try:
+                await db.rollback()
+            except Exception:
+                pass
+
+        if progress:
+            _scan_state.update(done=index, added=added, updated=updated,
+                               skipped=skipped, failed=failed)
+        # 定期提交：文件多时避免一个超长事务
+        if index % 50 == 0:
+            await db.commit()
 
     await db.commit()
+
     # 返回新增/变更的视频 id，供入库流水线接着跑（转音频 + 提取对白）
     ids = []
     for video in touched:
-        await db.refresh(video)
-        ids.append(video.id)
+        try:
+            await db.refresh(video)
+            ids.append(video.id)
+        except Exception:
+            pass
 
     # 清理"库里有、磁盘上没有"的记录（连同转写、播放记录、计划项、cache 音轨）
+    if progress:
+        _scan_state["stage"] = "清理缺失记录"
     missing = await find_missing(db)
     removed: list[dict] = []
     warning = None
@@ -260,8 +310,64 @@ async def scan_media(db: AsyncSession) -> dict:
         "added": added,
         "updated": updated,
         "skipped": skipped,
+        "failed": failed,
         "ids": ids,
         "removed": len(removed),
         "removed_items": removed[:20],
         "warning": warning,
     }
+
+
+def _collect_files(root: Path) -> list[tuple[str, Path, int, int]]:
+    """遍历媒体目录，返回 (相对路径, 绝对路径, 大小, mtime)。
+
+    单个文件 stat 失败（权限、坏链接、挂载抖动）就跳过，不影响其余文件。
+    """
+    out: list[tuple[str, Path, int, int]] = []
+    for dirpath, _dirnames, filenames in os.walk(root):
+        for name in filenames:
+            path = Path(dirpath) / name
+            if path.suffix.lower() not in VIDEO_EXT:
+                continue
+            try:
+                stat = path.stat()
+                out.append((path.relative_to(root).as_posix(), path,
+                            stat.st_size, int(stat.st_mtime)))
+            except OSError:
+                continue
+    return out
+
+
+async def run_scan(trigger_ingest: bool = True) -> None:
+    """后台扫描入口：1923 个文件要几分钟，不能挂在 HTTP 请求里等。"""
+    from .pipeline import run_ingest
+
+    _scan_state.update(
+        running=True, stage="准备中", total=0, done=0,
+        added=0, updated=0, skipped=0, failed=0, removed=0,
+        warning=None, error=None, started_at=_now(), finished_at=None,
+    )
+    try:
+        async with SessionLocal() as db:
+            result = await scan_media(db, progress=True)
+            _scan_state.update(
+                added=result.get("added", 0),
+                updated=result.get("updated", 0),
+                skipped=result.get("skipped", 0),
+                failed=result.get("failed", 0),
+                removed=result.get("removed", 0),
+                warning=result.get("warning"),
+            )
+            if result.get("error"):
+                _scan_state["error"] = result["error"]
+            ids = result.get("ids") or []
+
+        # 导入完成后接着跑入库流水线（转音频 + 测响度 + 提取对白）
+        # 保持 running=True，前端轮询不会以为提前结束
+        if trigger_ingest and ids:
+            _scan_state["stage"] = "入库处理中"
+            await run_ingest(ids)
+    except Exception as exc:
+        _scan_state["error"] = f"导入失败: {str(exc)[:200]}"
+    finally:
+        _scan_state.update(running=False, stage="", finished_at=_now())

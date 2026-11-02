@@ -1,4 +1,4 @@
-﻿'use strict';
+'use strict';
 
 const state = {
   token: localStorage.getItem('token') || '',
@@ -53,9 +53,30 @@ async function api(path, options = {}) {
     throw new Error('登录已过期，请重新登录');
   }
   const text = await res.text();
-  const data = text ? JSON.parse(text) : null;
-  if (!res.ok) throw new Error((data && data.detail) || res.statusText);
+  // 服务端 500 时返回的是纯文本 "Internal Server Error"，
+  // 直接 JSON.parse 会抛 "unexpected token"，把真正的错误盖掉
+  let data = null;
+  if (text) {
+    try {
+      data = JSON.parse(text);
+    } catch (err) {
+      data = null;
+    }
+  }
+  if (!res.ok) {
+    const detail = (data && data.detail)
+      || (text ? text.trim().slice(0, 200) : '')
+      || res.statusText;
+    throw new Error(`HTTP ${res.status}：${detail}`);
+  }
+  if (text && data === null) {
+    throw new Error('服务端返回的不是 JSON，可能出错了');
+  }
   return data;
+}
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 /* ------------------------------------------------------------- 登录 */
@@ -647,20 +668,69 @@ function wireMaintenance() {
     const resultEl = document.getElementById('scan-result');
     const importBtn = document.getElementById('do-import');
     try {
-      const result = await api('/api/scan', { method: 'POST' });
-      const parts = [`新增 ${result.added || 0}`, `更新 ${result.updated || 0}`];
-      if (result.removed) parts.push(`清理 ${result.removed}`);
-      toast(parts.join('，') + (result.ingest_started ? '，开始处理' : ''));
+      const res = await api('/api/scan', { method: 'POST' });
+      if (res.already_running) {
+        toast('已经在导入了，稍等');
+      } else {
+        toast('开始导入，文件多的话要几分钟');
+      }
       importBtn.classList.add('hidden');
-      resultEl.textContent = parts.join(' · ') + (result.warning ? `　⚠ ${result.warning}` : '');
-      if (result.warning) resultEl.textContent = `⚠ ${result.warning}`;
-      if (result.ingest_started) watchIngest(result.ingest_count);
+      resultEl.textContent = '导入中…';
+      await watchScan();
     } catch (err) {
       toast(err.message);
+      resultEl.textContent = err.message;
     }
   });
 
   document.getElementById('do-audio').addEventListener('click', startAudioExtraction);
+}
+
+/** 轮询导入进度（1923 个文件要几分钟，不能等一个请求返回） */
+async function watchScan() {
+  const resultEl = document.getElementById('scan-result');
+  const startedAt = Date.now();
+  for (;;) {
+    let state;
+    try {
+      state = await api('/api/scan/status');
+    } catch (err) {
+      if (resultEl) resultEl.textContent = `读取进度失败：${err.message}`;
+      return;
+    }
+    if (state.running) {
+      // 入库阶段看的是转音频/转写的进度，不是文件扫描进度
+      let progress = `${state.done}/${state.total}`;
+      if (state.stage === '入库处理中') {
+        try {
+          const m = await api('/api/maintenance/status');
+          progress = `${m.done}/${m.total}`;
+        } catch (err) { /* 忽略 */ }
+      }
+      if (resultEl) {
+        resultEl.textContent =
+          `${state.stage || '处理中'} ${progress}` +
+          ` · 新增 ${state.added} 更新 ${state.updated}` +
+          ` 跳过 ${state.skipped}${state.failed ? ` 失败 ${state.failed}` : ''}`;
+      }
+      if (Date.now() - startedAt > 6 * 3600 * 1000) return;   // 保险：别无限轮询
+      await sleep(1000);
+      continue;
+    }
+
+    const parts = [`新增 ${state.added}`, `更新 ${state.updated}`, `跳过 ${state.skipped}`];
+    if (state.failed) parts.push(`失败 ${state.failed}`);
+    if (state.removed) parts.push(`清理 ${state.removed}`);
+    if (resultEl) {
+      resultEl.textContent = `导入完成：${parts.join(' · ')}`
+        + (state.warning ? `　⚠ ${state.warning}` : '')
+        + (state.error ? `　⚠ ${state.error}` : '');
+    }
+    toast(`导入完成，${parts.join('，')}`);
+    if (state.error) console.warn('导入异常：', state.error);
+    await renderSettings();
+    return;
+  }
 }
 
 async function renderSettings() {
