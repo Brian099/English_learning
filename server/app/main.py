@@ -1,8 +1,9 @@
-import logging
+﻿import logging
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
+from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
@@ -43,6 +44,23 @@ async def health() -> dict:
         "tz": settings.tz,
         "database": settings.database_url.split("://", 1)[0],
     }
+
+
+@app.exception_handler(Exception)
+async def unhandled_exception(_request: Request, exc: Exception) -> JSONResponse:
+    """兜底：未处理异常也返回 JSON。
+
+    默认的纯文本 "Internal Server Error" 会让前端 JSON.parse 报
+    "unexpected token I"，把真正的错误盖住。
+    """
+    logger.exception("未处理异常")
+    text = str(exc) or type(exc).__name__
+    if "database is locked" in text.lower():
+        text = "数据库正忙（后台正在导入/处理），请稍后重试"
+    return JSONResponse(
+        status_code=500,
+        content={"detail": f"{type(exc).__name__}: {text[:200]}"},
+    )
 
 
 for module in (auth, content, ingest, play, report, plan, student, maintenance, overview):

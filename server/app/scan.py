@@ -234,6 +234,14 @@ async def scan_media(db: AsyncSession, progress: bool = False) -> dict:
                     and existing.duration_ms):
                 skipped += 1
             else:
+                # 先把耗时的探测/哈希做完，再碰数据库：
+                # 这样写事务只持续几毫秒，不会横跨 ffprobe 把库锁住
+                duration = await _duration_ms(path)
+                try:
+                    file_hash = _quick_hash(path, size)
+                except OSError:
+                    file_hash = ""
+
                 series_name = rel.split("/")[0] if "/" in rel else "未分类"
                 series = (
                     await db.execute(select(Series).where(Series.name == series_name))
@@ -243,7 +251,6 @@ async def scan_media(db: AsyncSession, progress: bool = False) -> dict:
                     db.add(series)
                     await db.flush()
 
-                duration = await _duration_ms(path)
                 values = {
                     "title": Path(path.name).stem,
                     "series_id": series.id,
@@ -252,7 +259,7 @@ async def scan_media(db: AsyncSession, progress: bool = False) -> dict:
                     else (existing.duration_ms if existing else 0),
                     "size_bytes": size,
                     "mtime": mtime,
-                    "file_hash": _quick_hash(path, size),
+                    "file_hash": file_hash,
                 }
                 if existing:
                     for key, value in values.items():
@@ -275,9 +282,17 @@ async def scan_media(db: AsyncSession, progress: bool = False) -> dict:
         if progress:
             _scan_state.update(done=index, added=added, updated=updated,
                                skipped=skipped, failed=failed)
-        # 定期提交：文件多时避免一个超长事务
-        if index % 50 == 0:
+        # 每个文件单独提交：1923 个文件攒成一个大事务时，写锁会横跨多次
+        # ffprobe（十几秒），其它写请求（新增家庭等）会报 database is locked
+        try:
             await db.commit()
+        except Exception as exc:
+            failed += 1
+            _scan_state["error"] = f"{rel} 写入失败: {str(exc)[:120]}"
+            try:
+                await db.rollback()
+            except Exception:
+                pass
 
     await db.commit()
 
