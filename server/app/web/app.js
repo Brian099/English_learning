@@ -647,6 +647,41 @@ async function renderOwnerSettings(root) {
     </div>`;
 
   wireMaintenance();
+  resumeProgress();      // 刷新/重新进入时自动接上进度显示
+}
+
+/** 进入设置页时恢复进度显示：有任务在跑就接着轮询，否则显示上次结果 */
+async function resumeProgress() {
+  const resultEl = document.getElementById('scan-result');
+  const statusEl = document.getElementById('maintenance-status');
+  try {
+    const scan = await api('/api/scan/status');
+    if (scan.running) {
+      if (resultEl) resultEl.textContent = '导入进行中…';
+      watchScan();
+      return;
+    }
+    if (scan.total && resultEl) {
+      resultEl.textContent = `上次导入：新增 ${scan.added} · 更新 ${scan.updated} · 跳过 ${scan.skipped}`
+        + (scan.failed ? ` · 失败 ${scan.failed}` : '')
+        + (scan.warning ? `　⚠ ${scan.warning}` : '')
+        + (scan.error ? `　⚠ ${scan.error}` : '');
+    }
+
+    const ingest = await api('/api/maintenance/status');
+    if (ingest.running) {
+      watchIngest(ingest.total);
+      return;
+    }
+    const pending = await api('/api/maintenance/pending');
+    if (statusEl) {
+      statusEl.textContent = pending.pending
+        ? `还有 ${pending.pending} 集待处理（模型 ${pending.model}）`
+        : `全部已处理（模型 ${pending.model}）`;
+    }
+  } catch (err) {
+    console.warn('读取进度失败', err);
+  }
 }
 
 /** 内容维护按钮接线（主账号设置页用） */
