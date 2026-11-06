@@ -1,4 +1,4 @@
-﻿"""自动排片：按星期目标 + 只听没听过的内容。
+"""自动排片：按星期目标 + 只听没听过的内容。
 
 规则（按优先级）：
 1. **按星期取目标**：周一到周日各自一个分钟数（student.weekday_targets），
@@ -30,7 +30,6 @@ TZ = ZoneInfo(settings.tz)
 LEVELS = ["L1", "L2", "L3", "L4", "L5"]
 MAX_ITEMS = 10                        # 每天至少能排这么多集（底线，不因时长不够而少排）
 MAX_ITEMS_HARD = 100                  # 极端情况下的保险丝（5 秒一集也不至于排上千集）
-OVERSHOOT = 1.2                       # 允许超出目标时长 20%
 MAX_SAME_SERIES_IN_A_ROW = 2
 LISTENED_RATIO = 0.5                  # 累计有效时长达到总时长的一半就算听过
 WEEKDAYS_CN = ["周一", "周二", "周三", "周四", "周五", "周六", "周日"]
@@ -133,7 +132,11 @@ def _pack(
     series_tail: list[int | None],
     max_items: int = MAX_ITEMS,
 ) -> list[int]:
-    """按预算装填，先严格控系列连续性，排不满再放宽。"""
+    """按预算装填：一集一集累加，累计时长够了就停。
+
+    先严格控系列连续性（同系列最多连续 2 集），排不满再放宽。
+    最后那一集允许超出目标——超多少都接受，避免差几分钟排不满。
+    """
     picked: list[int] = []
     used_ms = 0
     tail = list(series_tail)
@@ -149,9 +152,8 @@ def _pack(
                 and len(tail) >= MAX_SAME_SERIES_IN_A_ROW
                 and all(sid == series_id for sid in tail[-MAX_SAME_SERIES_IN_A_ROW:])):
             return False
-        # 会明显超出预算的单集，只在还没排到任何内容时才接受
-        if used_ms > 0 and used_ms + duration_ms > budget_ms * OVERSHOOT:
-            return False
+        # 只要还没到目标就继续加；最后一集超多少都接受
+        # （宁可超一点，也不要差几分钟排不满）
         picked.append(video_id)
         used_ms += duration_ms
         tail.append(series_id)
