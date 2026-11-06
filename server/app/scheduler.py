@@ -1,4 +1,4 @@
-"""自动排片：按星期目标 + 只听没听过的内容。
+﻿"""自动排片：按星期目标 + 只听没听过的内容。
 
 规则（按优先级）：
 1. **按星期取目标**：周一到周日各自一个分钟数（student.weekday_targets），
@@ -14,6 +14,8 @@
 """
 from __future__ import annotations
 
+import math
+
 from datetime import date, datetime, timedelta
 from zoneinfo import ZoneInfo
 
@@ -26,7 +28,8 @@ from .models import PlayEvent, Student, Video
 TZ = ZoneInfo(settings.tz)
 
 LEVELS = ["L1", "L2", "L3", "L4", "L5"]
-MAX_ITEMS = 10                        # 一天最多几集，防止碎片化
+MAX_ITEMS = 10                        # 每天至少能排这么多集（底线，不因时长不够而少排）
+MAX_ITEMS_HARD = 100                  # 极端情况下的保险丝（5 秒一集也不至于排上千集）
 OVERSHOOT = 1.2                       # 允许超出目标时长 20%
 MAX_SAME_SERIES_IN_A_ROW = 2
 LISTENED_RATIO = 0.5                  # 累计有效时长达到总时长的一半就算听过
@@ -111,11 +114,24 @@ async def _candidates(
     return [row.id for row in ordered], meta
 
 
+def max_items_for(budget_ms: float, durations_ms: list[int] | None = None) -> int:
+    """按目标时长和实际片长决定最多排几集。
+
+    短视频（1 分钟一集）要 20 集才够 20 分钟，固定 10 集会永远排不满；
+    30 秒一集则要 40 集。所以按候选里最短的一集来估算，再用硬上限兜底。
+    """
+    usable = [d for d in (durations_ms or []) if d and d > 0]
+    shortest = min(usable) if usable else 60_000
+    needed = math.ceil(budget_ms / shortest)
+    return max(MAX_ITEMS, min(MAX_ITEMS_HARD, needed))
+
+
 def _pack(
     candidates: list[int],
     meta: dict[int, tuple[int, int | None]],
     budget_ms: float,
     series_tail: list[int | None],
+    max_items: int = MAX_ITEMS,
 ) -> list[int]:
     """按预算装填，先严格控系列连续性，排不满再放宽。"""
     picked: list[int] = []
@@ -124,7 +140,7 @@ def _pack(
 
     def try_add(video_id: int, enforce_series: bool) -> bool:
         nonlocal used_ms
-        if len(picked) >= MAX_ITEMS or used_ms >= budget_ms:
+        if len(picked) >= max_items or used_ms >= budget_ms:
             return False
         duration_ms, series_id = meta.get(video_id, (0, None))
         if duration_ms <= 0:
@@ -146,7 +162,7 @@ def _pack(
     for video_id in candidates:          # 放宽：把预算填满
         if video_id in picked:
             continue
-        if used_ms >= budget_ms or len(picked) >= MAX_ITEMS:
+        if used_ms >= budget_ms or len(picked) >= max_items:
             break
         try_add(video_id, False)
 
@@ -171,7 +187,8 @@ async def build_daily_plan(
     blocked = listened | (exclude or set())
 
     ids, meta = await _candidates(db, student, blocked)
-    picked = _pack(ids, meta, budget_ms, [])
+    picked = _pack(ids, meta, budget_ms, [],
+                       max_items_for(budget_ms, [d for d, _ in meta.values()]))
 
     total_ms = sum(meta[vid][0] for vid in picked)
     return {
@@ -204,7 +221,8 @@ async def build_week(
         budget_ms = target * 60_000
 
         ids, meta = await _candidates(db, student, blocked)
-        picked = _pack(ids, meta, budget_ms, [])
+        picked = _pack(ids, meta, budget_ms, [],
+                       max_items_for(budget_ms, [d for d, _ in meta.values()]))
         blocked |= set(picked)
 
         total_ms = sum(meta[vid][0] for vid in picked)
