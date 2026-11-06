@@ -1,4 +1,4 @@
-from pathlib import Path
+﻿from pathlib import Path
 import secrets
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -33,6 +33,9 @@ class Settings(BaseSettings):
     # ---- 入库流水线 ----
     # 扫描到新视频后自动转音频 + 提取对白（否则只入库元数据）
     auto_ingest: bool = True
+    # 排片时最后一集允许超出目标的比例（1.5 = 最多 150%）
+    # 调大：更容易排满，但可能超很多；调小：更严格，长视频库可能排不满
+    schedule_overshoot: float = 1.5
     # 播放端目标响度（LUFS）：入库只测响度不转码，学生端按这个目标自动调音量
     target_lufs: float = -16.0
     # 播放端放大时的峰值上限（dBFS），防止削波

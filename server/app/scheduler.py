@@ -135,7 +135,8 @@ def _pack(
     """按预算装填：一集一集累加，累计时长够了就停。
 
     先严格控系列连续性（同系列最多连续 2 集），排不满再放宽。
-    最后那一集允许超出目标——超多少都接受，避免差几分钟排不满。
+    最后一集允许超出目标，但总时长不超过 目标 × settings.schedule_overshoot
+    （默认 1.5，即最多 150%），防止单个超长视频把一天排成两倍。
     """
     picked: list[int] = []
     used_ms = 0
@@ -152,8 +153,10 @@ def _pack(
                 and len(tail) >= MAX_SAME_SERIES_IN_A_ROW
                 and all(sid == series_id for sid in tail[-MAX_SAME_SERIES_IN_A_ROW:])):
             return False
-        # 只要还没到目标就继续加；最后一集超多少都接受
-        # （宁可超一点，也不要差几分钟排不满）
+        # 还没到目标就继续加；但要守住超额上限，否则一个 40 分钟的片子
+        # 会把 20 分钟的目标排成 60 分钟
+        if used_ms > 0 and used_ms + duration_ms > budget_ms * settings.schedule_overshoot:
+            return False
         picked.append(video_id)
         used_ms += duration_ms
         tail.append(series_id)

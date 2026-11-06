@@ -1,4 +1,4 @@
-# 部署包（飞牛 fnOS / 任意 Linux）
+﻿# 部署包（飞牛 fnOS / 任意 Linux）
 
 **单容器、零配置**：改一行媒体路径就能跑，不需要 `.env`，不需要在 NAS 上构建。
 镜像从 Docker Hub 拉取：`brian9909/moer:latest`
@@ -147,6 +147,7 @@ docker compose pull && docker compose up -d
 | `PARENT_PASSWORD` | `kids1234` | 家长端密码，**建议改** |
 | `AUTO_INGEST` | `1` | 扫描后自动跑流水线；`0` 只入库元数据 |
 | `TARGET_LUFS` | `-16` | 播放端目标响度（LUFS） |
+| `SCHEDULE_OVERSHOOT` | `1.5` | 排片最后一集最多超出目标的倍数 |
 | `WHISPER_MODEL` | `small.en` | 或 `base.en`（更快）/ `medium.en`（更准） |
 | `WHISPER_THREADS` | `3` | 留一核给 NAS |
 | `TZ` | `Asia/Shanghai` | 统计切天用的时区 |

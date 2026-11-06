@@ -17,6 +17,8 @@ services:
       # 扫描到新视频后自动：转音频 → 测响度 → 提取对白 → 难度分级
       AUTO_INGEST: "1"
       TARGET_LUFS: "-16"
+      # 排片时最后一集允许超出目标的比例（1.5 = 最多 150%）
+      SCHEDULE_OVERSHOOT: "1.5"
       # 转写成功后删除 ASR 输入的 wav（32KB/s 不压缩，很占地方）
       # 设成 1 可保留，调试用
       KEEP_ASR_WAV: "0"
